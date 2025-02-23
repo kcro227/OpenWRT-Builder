@@ -1,0 +1,12 @@
+resources/.config
+resources/feeds.conf.default
+resources/zzz-default-settings
+resources/backups/feeds.conf.default.1740307475.bak
+resources/backups/feeds.conf.default.1740307529.bak
+resources/backups/feeds.conf.default.1740307692.bak
+resources/backups/feeds.conf.default.1740308479.bak
+resources/backups/zzz-default-settings.1740307475.bak
+resources/backups/zzz-default-settings.1740307529.bak
+resources/backups/zzz-default-settings.1740307692.bak
+resources/backups/zzz-default-settings.1740308479.bak
+resources/logs/build-20250223.log
