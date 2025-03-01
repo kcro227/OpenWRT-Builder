@@ -5,8 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${SCRIPT_DIR}/.."
 RES_DIR="${PROJECT_ROOT}/resources"
 SRC_DIR="${PROJECT_ROOT}/src"
-PKG_CONFIG="${PROJECT_ROOT}/packages/packages.config"
-DL_CONFIG="${PROJECT_ROOT}/packages/download.config"
+PKG_CONFIG="${PROJECT_ROOT}/packages.config"
+DL_CONFIG="${PROJECT_ROOT}/download.config"
 BACKUP_DIR="${RES_DIR}/backups"
 
 # 固定文件路径
@@ -190,7 +190,7 @@ initialize_project() {
     log INFO "开始初始化流程"
     
     # 1. 备份原始文件
-    backup_critical_files
+   # backup_critical_files
     
     # 2. 安装软件包
     install_packages

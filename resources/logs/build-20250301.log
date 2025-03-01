@@ -1,0 +1,84 @@
+[0;32m工程配置管理脚本
+
+使用方法: ./scripts/config.sh [命令]
+
+核心命令:
+  init     完整初始化 (备份→安装→覆盖)
+  clean    清理工程 (删除包+恢复配置)
+  backup   备份原始配置文件
+  install  仅安装软件包
+  download 下载远程软件包
+  help     显示帮助信息
+
+配置文件:
+  包配置文件: packages.config
+  下载配置: download.config
+  资源目录: resources[0m
+[0;34m[12:50:37] INFO: 开始清理工程[0m
+[0;32m[12:50:37] SUCCESS: 已删除: src/package/own[0m
+[0;32m[12:50:37] SUCCESS: 已恢复: src/feeds.conf.default[0m
+[0;32m[12:50:37] SUCCESS: 已恢复: src/package/lean/default-settings/files/zzz-default-settings[0m
+[0;32m[12:50:37] SUCCESS: 清理操作完成[0m
+[0;34m[12:51:21] INFO: 开始下载软件包[0m
+[0;33m[12:51:21] WARNING: 跳过已存在包: luci-app-wrtbwmon[0m
+[0;33m[12:51:21] WARNING: 跳过已存在包: lede[0m
+[0;33m[12:51:21] WARNING: 跳过已存在包: wechatpush[0m
+[0;33m[12:51:21] WARNING: 跳过已存在包: sirpdboy-package[0m
+[0;33m[12:51:21] WARNING: 跳过已存在包: qmodem[0m
+[0;33m[12:51:21] WARNING: 跳过已存在包: openclash[0m
+[0;34m[12:52:10] INFO: 开始初始化流程[0m
+[0;34m[12:52:10] INFO: 开始系统备份[0m
+[0;32m[12:52:10] SUCCESS: 备份成功: resources/backups/feeds.conf.default.1740804730.bak[0m
+[0;32m[12:52:10] SUCCESS: 备份成功: resources/backups/zzz-default-settings.1740804730.bak[0m
+[0;34m[12:52:10] INFO: 开始安装软件包[0m
+[0;32m[12:52:10] SUCCESS: 安装成功: luci-app-wrtbwmon → src/package/own/luci-app-wrtbwmon[0m
+[0;32m[12:52:10] SUCCESS: 安装成功: qmodem → src/package/own/qmodem[0m
+[0;32m[12:52:10] SUCCESS: 安装成功: luci-app-openclash → src/package/own/luci-app-openclash[0m
+[0;32m[12:52:10] SUCCESS: 安装成功: sirpdboy-package/wrtbwmon → src/package/own/sirpdboy-package/wrtbwmon[0m
+[0;32m[12:52:10] SUCCESS: 安装成功: luci-app-wechatpush → src/package/own/luci-app-wechatpush[0m
+[0;34m[12:52:10] INFO: 安装完成 (成功: 5/5)[0m
+[0;34m[12:52:10] INFO: 开始覆盖配置文件[0m
+[0;32m[12:52:10] SUCCESS: 已覆盖 feeds.conf.default[0m
+[0;32m[12:52:10] SUCCESS: 已覆盖 zzz-default-settings[0m
+[0;32m[12:52:10] SUCCESS: 工程初始化完成[0m
+[0;34m[14:07:55] INFO: 开始清理工程[0m
+[0;32m[14:07:55] SUCCESS: 已删除: src/package/own[0m
+[0;32m[14:07:55] SUCCESS: 已恢复: src/feeds.conf.default[0m
+[0;32m[14:07:55] SUCCESS: 已恢复: src/package/lean/default-settings/files/zzz-default-settings[0m
+[0;32m[14:07:55] SUCCESS: 清理操作完成[0m
+[0;34m[14:11:11] INFO: 开始清理工程[0m
+[0;32m[14:11:11] SUCCESS: 已恢复: src/feeds.conf.default[0m
+[0;32m[14:11:11] SUCCESS: 已恢复: src/package/lean/default-settings/files/zzz-default-settings[0m
+[0;32m[14:11:11] SUCCESS: 清理操作完成[0m
+[0;34m[14:11:37] INFO: 开始清理工程[0m
+[0;32m[14:11:37] SUCCESS: 已恢复: src/feeds.conf.default[0m
+[0;32m[14:11:37] SUCCESS: 已恢复: src/package/lean/default-settings/files/zzz-default-settings[0m
+[0;32m[14:11:37] SUCCESS: 清理操作完成[0m
+[0;34m[14:11:59] INFO: 开始初始化流程[0m
+[0;34m[14:11:59] INFO: 开始安装软件包[0m
+[0;32m[14:11:59] SUCCESS: 安装成功: luci-app-wrtbwmon → src/package/own/luci-app-wrtbwmon[0m
+[0;32m[14:11:59] SUCCESS: 安装成功: qmodem → src/package/own/qmodem[0m
+[0;32m[14:12:00] SUCCESS: 安装成功: luci-app-openclash → src/package/own/luci-app-openclash[0m
+[0;32m[14:12:00] SUCCESS: 安装成功: sirpdboy-package/wrtbwmon → src/package/own/sirpdboy-package/wrtbwmon[0m
+[0;32m[14:12:00] SUCCESS: 安装成功: luci-app-wechatpush → src/package/own/luci-app-wechatpush[0m
+[0;34m[14:12:00] INFO: 安装完成 (成功: 5/5)[0m
+[0;34m[14:12:00] INFO: 开始覆盖配置文件[0m
+[0;32m[14:12:00] SUCCESS: 已覆盖 feeds.conf.default[0m
+[0;32m[14:12:00] SUCCESS: 已覆盖 zzz-default-settings[0m
+[0;32m[14:12:00] SUCCESS: 工程初始化完成[0m
+[0;34m[15:03:43] INFO: 开始清理工程[0m
+[0;32m[15:03:43] SUCCESS: 已删除: src/package/own[0m
+[0;32m[15:03:43] SUCCESS: 已恢复: src/feeds.conf.default[0m
+[0;32m[15:03:43] SUCCESS: 已恢复: src/package/lean/default-settings/files/zzz-default-settings[0m
+[0;32m[15:03:43] SUCCESS: 清理操作完成[0m
+[0;34m[15:03:48] INFO: 开始初始化流程[0m
+[0;34m[15:03:48] INFO: 开始安装软件包[0m
+[0;32m[15:03:48] SUCCESS: 安装成功: luci-app-wrtbwmon → src/package/own/luci-app-wrtbwmon[0m
+[0;32m[15:03:48] SUCCESS: 安装成功: qmodem → src/package/own/qmodem[0m
+[0;32m[15:03:48] SUCCESS: 安装成功: sirpdboy-package/wrtbwmon → src/package/own/sirpdboy-package/wrtbwmon[0m
+[0;32m[15:03:48] SUCCESS: 安装成功: luci-app-wechatpush → src/package/own/luci-app-wechatpush[0m
+[0;34m[15:03:48] INFO: 安装完成 (成功: 4/4)[0m
+[0;34m[15:03:48] INFO: 开始覆盖配置文件[0m
+[0;32m[15:03:48] SUCCESS: 已覆盖 feeds.conf.default[0m
+[0;32m[15:03:48] SUCCESS: 已覆盖 zzz-default-settings[0m
+[0;32m[15:03:48] SUCCESS: 工程初始化完成[0m
