@@ -269,6 +269,86 @@ download_packages() {
     done < "$DL_CONFIG"
 }
 
+# 更新软件包
+update_packages() {
+    log INFO "开始更新软件包"
+    local total=0 success=0
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # 清理行内容
+        clean_line=$(echo "$line" | sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        [ -z "$clean_line" ] && continue
+        ((total++))
+
+        # 解析字段 (使用更可靠的解析方式)
+        type=$(echo "$clean_line" | awk '{print $1}')
+        name=$(echo "$clean_line" | awk '{print $2}')
+        repo_info=$(echo "$clean_line" | awk '{print $3}')
+        dest_path=$(echo "$clean_line" | awk '{$1=$2=$3=""; print $0}' | sed -e 's/^[[:space:]]*//')
+
+        # 分割仓库和分支（修复解析逻辑）
+        IFS=';' read -r repo branch <<< "$repo_info"
+        branch="${branch:-master}"  # 默认master分支
+
+        # 构建目标路径（处理带空格的路径）
+        target_dir="${PROJECT_ROOT}/${dest_path}"
+
+        # 检查目录有效性
+        if [ ! -d "$target_dir" ]; then
+            log WARNING "跳过未安装包: $name"
+            continue
+        fi
+
+        if [ ! -d "$target_dir/.git" ]; then
+            log WARNING "非git仓库: ${target_dir/#$PROJECT_ROOT\//}"
+            continue
+        fi
+
+        # 进入目录（处理带空格路径）
+        if ! pushd "$target_dir" >/dev/null; then
+            log ERROR "无法进入目录: ${target_dir/#$PROJECT_ROOT\//}"
+            continue
+        fi
+
+        # 分支处理逻辑（优化切换策略）
+        current_branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+        if [[ "$current_branch" != "$branch" ]]; then
+            log INFO "切换分支: $current_branch -> $branch"
+            if ! git checkout -q "$branch"; then
+                log ERROR "分支切换失败: $name → $branch"
+                popd >/dev/null
+                continue
+            fi
+        fi
+
+        # 带重试的更新（优化错误处理）
+        for attempt in {1..3}; do
+            log INFO "更新尝试 (${attempt}/3): $name"
+            if git fetch --all && git reset --hard origin/$branch; then
+                log SUCCESS "更新成功: $name"
+                ((success++))
+                break
+            else
+                log WARNING "更新失败 (尝试: ${attempt}/3)"
+                sleep $((attempt * 2))
+                
+                # 最后一次尝试强制清理
+                if [ $attempt -eq 3 ]; then
+                    git reset --hard HEAD
+                    git clean -df
+                    if git pull; then
+                        log SUCCESS "强制更新成功: $name"
+                        ((success++))
+                    fi
+                fi
+            fi
+        done
+
+        popd >/dev/null
+    done < "$DL_CONFIG"
+
+    log INFO "更新完成 (成功: ${success}/${total})"
+}
 
 # 更新帮助信息
 show_help() {
@@ -281,9 +361,10 @@ show_help() {
     echo "  clean    清理工程 (删除包+恢复配置)"
     echo "  backup   备份原始配置文件"
     echo "  install  仅安装软件包"
-    echo "  download 下载远程软件包"  # 新增说明
+    echo "  download 下载远程软件包"
+    echo "  update   更新已下载的软件包"  # 新增命令说明
     echo "  help     显示帮助信息"
-    echo
+    echo ----
     echo "配置文件:"
     echo -e "  包配置文件: ${PKG_CONFIG/#$PROJECT_ROOT\//}"
     echo -e "  下载配置: ${DL_CONFIG/#$PROJECT_ROOT\//}"  # 新增配置说明
@@ -291,7 +372,6 @@ show_help() {
 }
 
 
-# 主函数（新增download处理）
 main() {
     init_logging
     
@@ -300,7 +380,8 @@ main() {
         clean)   clean_project ;;
         backup)  backup_critical_files ;;
         install) install_packages ;;
-        download) download_packages ;;  # 新增命令
+        download) download_packages ;;
+        update)  update_packages ;;  # 新增update命令
         help|*)  show_help ;;
     esac
 }
