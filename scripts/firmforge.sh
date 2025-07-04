@@ -15,6 +15,7 @@ SRC_DIR="${PROJECT_ROOT}/src"
 PKG_CONFIG="${SCRIPT_DIR}/packages.config"
 DL_CONFIG="${SCRIPT_DIR}/download.config"
 BACKUP_DIR="${RES_DIR}/backups"
+COPY_CONFIG="${SCRIPT_DIR}/copy.config"  
 
 # 固定文件路径
 FEEDS_CONF="${SRC_DIR}/feeds.conf.default"
@@ -34,7 +35,6 @@ UNDERLINE='\033[4m'
 # 日志级别 (DEBUG, INFO, WARNING, ERROR)
 LOG_LEVEL=${LOG_LEVEL:-"DEBUG"}
 
-source ~/.bashrc
 
 # 初始化日志系统
 init_logging() {
@@ -651,9 +651,145 @@ run_interactive_config() {
     fi
 }
 
+# 完整构建流程
+full_build() {
+    log INFO "启动完整构建流程"
+
+    download_packages || {
+        log ERROR "下载软件包失败，构建中止"
+        return 1
+    }
+
+    install_packages || {
+        log ERROR "安装软件包失败，构建中止"
+        return 1
+    }
+
+    update_feeds || {
+        log ERROR "更新feeds失败，构建中止"
+        return 1
+    }
+
+    compile_firmware || {
+        log ERROR "固件编译失败"
+        return 1
+    }
+
+    log SUCCESS "完整构建流程成功完成!"
+}
+
+# 复制固件文件
+copy_firmware() {
+    log INFO "开始复制固件文件"
+    local total_files=0 copied_files=0
+    local config_found=0
+    
+    # 检查配置文件是否存在
+    validate_file "$COPY_CONFIG" || {
+        log ERROR "复制配置文件不存在: ${COPY_CONFIG/#$PROJECT_ROOT\//}"
+        return 1
+    }
+    
+    # 获取当前日期(年-月-日 格式)
+    local current_date=$(date +%Y-%m-%d)
+    
+    # 读取配置文件并处理
+    while IFS= read -r line; do
+        # 跳过注释行和空行
+        [[ $line =~ ^# || -z $line ]] && continue
+        ((config_found++))
+        
+        # 分割源路径和目标基础路径
+        read -r src_pattern dest_base <<< "$line"
+        
+        # 验证路径
+        if [[ -z $src_pattern || -z $dest_base ]]; then
+            log WARNING "跳过无效配置行: $line"
+            continue
+        fi
+        
+        log DEBUG "处理配置: 源路径=$src_pattern, 目标基础路径=$dest_base"
+        
+        # 构建完整目标路径
+        local target_dir="${dest_base}/${current_date}"
+        
+        # 创建目标目录
+        mkdir -p "$target_dir" || {
+            log ERROR "创建目录失败: $target_dir"
+            continue
+        }
+        
+        # 构建相对于SRC_DIR的完整路径
+        local full_src_path="${SRC_DIR}/${src_pattern}"
+        
+        # 添加详细调试日志
+        log DEBUG "搜索路径: $full_src_path"
+        
+        # 扩展源路径中的通配符
+        local expanded_files=()
+        for file in $full_src_path; do
+            # 只添加存在的文件
+            if [ -e "$file" ]; then
+                expanded_files+=("$file")
+            fi
+        done
+        
+        # 检查是否有匹配的文件
+        if [ ${#expanded_files[@]} -eq 0 ]; then
+            log WARNING "没有找到匹配的文件: $src_pattern"
+            log DEBUG "尝试在SRC_DIR下递归查找..."
+            
+            # 尝试使用find递归查找
+            while IFS= read -r -d $'\0' file; do
+                expanded_files+=("$file")
+            done < <(find "$SRC_DIR" -path "*${src_pattern}" -print0 2>/dev/null)
+            
+            if [ ${#expanded_files[@]} -eq 0 ]; then
+                log WARNING "仍然没有找到匹配的文件: $src_pattern"
+            fi
+        fi
+        
+        # 复制匹配的文件
+        local found_files=0
+        for file in "${expanded_files[@]}"; do
+            if [ -e "$file" ]; then
+                # 计算相对于SRC_DIR的路径
+                local relative_path="${file/#$SRC_DIR\//}"
+                if cp -v "$file" "$target_dir/"; then
+                    log SUCCESS "复制: $relative_path → ${target_dir/#$PROJECT_ROOT\//}"
+                    ((found_files++))
+                    ((copied_files++))
+                else
+                    log WARNING "复制失败: $relative_path"
+                fi
+                ((total_files++))
+            fi
+        done
+        
+        # 输出结果
+        if [ $found_files -gt 0 ]; then
+            log INFO "已复制 $found_files 个文件到: ${target_dir/#$PROJECT_ROOT\//}"
+        fi
+        
+    done < "$COPY_CONFIG"
+    
+    # 检查是否有有效的配置行
+    if [ $config_found -eq 0 ]; then
+        log WARNING "配置文件中没有有效的配置行"
+    fi
+    
+    if [ $copied_files -gt 0 ]; then
+        log SUCCESS "复制完成 (总计: $copied_files/$total_files)"
+    else
+        log WARNING "没有复制任何文件"
+    fi
+    
+    [ $copied_files -gt 0 ] || return 1
+}
+
 # 显示帮助信息
 show_help() {
-    echo -e "${GREEN}${BOLD}OpenWrt高级构建管理系统 v3.1${NC}"
+    echo -e "${GREEN}${BOLD}OpenWrt高级构建管理系统 v3.2${NC}"
     echo -e "${CYAN}=============================================${NC}"
     echo
     echo -e "${BOLD}使用方法: $0 [命令]${NC}"
@@ -673,6 +809,7 @@ show_help() {
     echo "  build           编译固件"
     echo "  clean-build     清理编译产生的文件"
     echo "  config          启动交互式配置菜单"
+    echo "  copy            复制固件文件到目标目录"  # 新增命令
     echo
     echo -e "${YELLOW}${BOLD}高级命令:${NC}"
     echo "  full-build      完整构建流程 (下载→安装→更新→编译)"
@@ -687,6 +824,7 @@ show_help() {
     echo -e "${YELLOW}${BOLD}配置文件:${NC}"
     echo -e "  包配置文件:   ${UNDERLINE}${PKG_CONFIG/#$PROJECT_ROOT\//}${NC}"
     echo -e "  下载配置:     ${UNDERLINE}${DL_CONFIG/#$PROJECT_ROOT\//}${NC}"
+    echo -e "  复制配置:     ${UNDERLINE}${COPY_CONFIG/#$PROJECT_ROOT\//}${NC}"  # 新增配置
     echo -e "  资源目录:     ${UNDERLINE}${RES_DIR/#$PROJECT_ROOT\//}${NC}"
     echo
     echo -e "${CYAN}=============================================${NC}"
@@ -715,6 +853,10 @@ full_build() {
         log ERROR "固件编译失败"
         return 1
     }
+    
+    copy_firmware || {
+        log WARNING "固件复制失败，但构建已完成"
+    }
 
     log SUCCESS "完整构建流程成功完成!"
 }
@@ -738,6 +880,7 @@ main() {
     build) compile_firmware ;;
     clean-build) clean_compilation ;;
     config) run_interactive_config ;;
+    copy) copy_firmware ;;  # 新增命令
     full-build) full_build ;;
     help | *) show_help ;;
     esac
