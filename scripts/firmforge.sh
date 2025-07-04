@@ -2,7 +2,7 @@
 
 # =============================================
 # OpenWrt高级构建管理系统
-# 版本: 3.2
+# 版本: 3.6
 # 作者: KCrO
 # 更新: 2025-07-04
 # =============================================
@@ -17,6 +17,7 @@ PKG_CONFIG="${SCRIPT_DIR}/packages.config"  # 软件包安装配置文件
 DL_CONFIG="${SCRIPT_DIR}/download.config"  # 软件包下载配置文件
 BACKUP_DIR="${RES_DIR}/backups"  # 备份文件目录
 COPY_CONFIG="${SCRIPT_DIR}/copy.config"  # 文件复制配置文件
+CUSTOMIZE_CONFIG="${SCRIPT_DIR}/customize.config"  # 配置文件定制规则
 
 # 固定文件路径
 FEEDS_CONF="${SRC_DIR}/feeds.conf.default"  # feeds配置文件
@@ -280,6 +281,234 @@ clean_build_environment() {
     log SUCCESS "构建环境清理完成"
 }
 
+
+# 应用定制规则
+apply_customization() {
+    # 使用实际变量值替换路径中的占位符
+    local target_file=$(eval echo "$1")
+    local action="$2"
+    local arg1="$3"
+    local arg2="$4"
+    
+    # 验证目标文件是否存在
+    validate_file "$target_file" || {
+        log WARNING "目标文件不存在: ${target_file/#$PROJECT_ROOT\//}"
+        return 1
+    }
+    
+    # 根据操作类型执行相应操作
+    case "$action" in
+        "replace")
+            # 替换操作: 替换目标文件中的特定字符串
+            if [ -z "$arg1" ] || [ -z "$arg2" ]; then
+                log WARNING "替换操作需要两个参数: 查找字符串和替换字符串"
+                return 1
+            fi
+            
+            if sed -i "s|${arg1}|${arg2}|g" "$target_file"; then
+                log SUCCESS "替换成功: ${target_file/#$PROJECT_ROOT\//}"
+            else
+                log ERROR "替换失败: ${target_file/#$PROJECT_ROOT\//}"
+                return 1
+            fi
+            ;;
+            
+        "insert-after")
+            # 插入操作: 在匹配行后插入内容
+            if [ -z "$arg1" ] || [ -z "$arg2" ]; then
+                log WARNING "插入操作需要两个参数: 匹配字符串和插入内容"
+                return 1
+            fi
+            
+            # 检查是否已存在相同内容
+            if grep -qF "$arg2" "$target_file"; then
+                log WARNING "跳过重复插入: 目标文件中已存在相同内容: ${arg2}"
+                return 0
+            fi
+            
+            if sed -i "/${arg1}/a \\${arg2}" "$target_file"; then
+                log SUCCESS "插入成功: ${target_file/#$PROJECT_ROOT\//}"
+            else
+                log ERROR "插入失败: ${target_file/#$PROJECT_ROOT\//}"
+                return 1
+            fi
+            ;;
+            
+        "insert-before")
+            # 插入操作: 在匹配行前插入内容
+            if [ -z "$arg1" ] || [ -z "$arg2" ]; then
+                log WARNING "插入操作需要两个参数: 匹配字符串和插入内容"
+                return 1
+            fi
+            
+            # 检查是否已存在相同内容
+            if grep -qF "$arg2" "$target_file"; then
+                log WARNING "跳过重复插入: 目标文件中已存在相同内容: ${arg2}"
+                return 0
+            fi
+            
+            if sed -i "/${arg1}/i \\${arg2}" "$target_file"; then
+                log SUCCESS "插入成功: ${target_file/#$PROJECT_ROOT\//}"
+            else
+                log ERROR "插入失败: ${target_file/#$PROJECT_ROOT\//}"
+                return 1
+            fi
+            ;;
+            
+        "append")
+            # 追加操作: 在文件末尾追加内容
+            if [ -z "$arg1" ]; then
+                log WARNING "追加操作需要内容参数"
+                return 1
+            fi
+            
+            # 检查是否已存在相同内容
+            if grep -qF "$arg1" "$target_file"; then
+                log WARNING "跳过重复追加: 目标文件中已存在相同内容: ${arg1}"
+                return 0
+            fi
+            
+            if echo -e "$arg1" >> "$target_file"; then
+                log SUCCESS "追加成功: ${target_file/#$PROJECT_ROOT\//}"
+            else
+                log ERROR "追加失败: ${target_file/#$PROJECT_ROOT\//}"
+                return 1
+            fi
+            ;;
+            
+        "delete")
+            # 删除操作: 删除匹配的行
+            if [ -z "$arg1" ]; then
+                log WARNING "删除操作需要匹配字符串"
+                return 1
+            fi
+            
+            if sed -i "/${arg1}/d" "$target_file"; then
+                log SUCCESS "删除成功: ${target_file/#$PROJECT_ROOT\//}"
+            else
+                log ERROR "删除失败: ${target_file/#$PROJECT_ROOT\//}"
+                return 1
+            fi
+            ;;
+            
+        *)
+            log WARNING "未知操作类型: $action"
+            return 1
+            ;;
+    esac
+    
+    return 0
+}
+
+# 定制配置文件
+customize_config_files() {
+    local context="$1"  # 定制上下文: init(初始化) 或 build(编译)
+    local build_time="$2"  # 编译时间 (仅用于build上下文)
+    
+    log INFO "开始${context}阶段配置文件定制"
+    
+    # 检查定制配置文件是否存在
+    validate_file "$CUSTOMIZE_CONFIG" || {
+        log WARNING "定制配置文件不存在，使用默认设置"
+        
+        # 根据上下文应用默认设置
+        if [ "$context" == "init" ]; then
+            customize_default_settings_init
+        elif [ "$context" == "build" ]; then
+            customize_default_settings_build "$build_time"
+        fi
+        
+        return 0
+    }
+    
+    # 读取定制配置文件
+    local line_count=0
+    while IFS= read -r line; do
+        # 跳过注释行和空行
+        [[ $line =~ ^# || -z $line ]] && continue
+        ((line_count++))
+        
+        # 替换规则中的变量
+        line=$(echo "$line" | sed -e "s|\${AUTHOR}|$AUTHOR|g" \
+                                  -e "s|\${PROJECT_ROOT}|$PROJECT_ROOT|g" \
+                                  -e "s|\${SRC_DIR}|$SRC_DIR|g" \
+                                  -e "s|\${ZZZ_SETTINGS}|$ZZZ_SETTINGS|g")
+        
+        # 解析配置行：上下文;操作类型;目标文件;参数1;参数2
+        IFS=';' read -r line_context action target_file arg1 arg2 <<< "$line"
+        
+        # 检查上下文是否匹配
+        if [ "$line_context" != "$context" ] && [ "$line_context" != "all" ]; then
+            continue
+        fi
+        
+        # 仅在编译阶段替换参数2中的占位符
+        if [ -n "$build_time" ]; then
+            arg2=$(echo "$arg2" | sed "s/__BUILD_TIME__/$build_time/g")
+        fi
+        
+        # 应用定制规则
+        apply_customization "$target_file" "$action" "$arg1" "$arg2"
+        
+    done < "$CUSTOMIZE_CONFIG"
+    
+    if [ $line_count -eq 0 ]; then
+        log WARNING "没有找到适用于${context}上下文的定制规则"
+        
+        # 如果没有找到规则，应用默认设置
+        if [ "$context" == "init" ]; then
+            customize_default_settings_init
+        elif [ "$context" == "build" ]; then
+            customize_default_settings_build "$build_time"
+        fi
+    else
+        log SUCCESS "${context}阶段配置文件定制完成"
+    fi
+}
+
+# 初始化阶段默认设置定制
+customize_default_settings_init() {
+    log INFO "应用初始化阶段默认设置"
+    
+    # 1. 修改固件描述信息 (使用占位符)
+    local target_desc="LEDE Build by ${AUTHOR} @ __BUILD_TIME__"
+    apply_customization "$ZZZ_SETTINGS" "replace" "DISTRIB_DESCRIPTION='.*'" "DISTRIB_DESCRIPTION='${target_desc}'"
+    
+    # 2. 添加网络和主机名配置
+    local network_config="uci set network.lan.ipaddr='192.168.8.1'   # 默认 IP 地址"
+    local hostname_config="uci set system.@system[0].hostname='M28C'"
+    
+    # 添加网络配置（仅当不存在时添加）
+    if ! grep -qF "$network_config" "$ZZZ_SETTINGS"; then
+        apply_customization "$ZZZ_SETTINGS" "insert-after" "DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} @ __BUILD_TIME__'" "$network_config"
+    else
+        log WARNING "跳过重复网络配置: ${network_config}"
+    fi
+    
+    # 添加主机名配置（仅当不存在时添加）
+    if ! grep -qF "$hostname_config" "$ZZZ_SETTINGS"; then
+        apply_customization "$ZZZ_SETTINGS" "insert-after" "DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} @ __BUILD_TIME__'" "$hostname_config"
+    else
+        log WARNING "跳过重复主机名配置: ${hostname_config}"
+    fi
+}
+
+# 编译阶段默认设置定制
+customize_default_settings_build() {
+    local build_time="$1"
+    log INFO "应用编译阶段默认设置"
+    
+    # 更新固件描述信息 (替换为实际构建时间)
+    local target_desc="LEDE Build by ${AUTHOR} @ ${build_time}"
+    
+    # 使用更宽泛的正则表达式匹配，确保即使占位符已被替换也能匹配
+    if sed -i "s|DISTRIB_DESCRIPTION='.*'|DISTRIB_DESCRIPTION='${target_desc}'|g" "$ZZZ_SETTINGS"; then
+        log SUCCESS "构建时间更新成功: ${ZZZ_SETTINGS/#$PROJECT_ROOT\//}"
+    else
+        log ERROR "构建时间更新失败: ${ZZZ_SETTINGS/#$PROJECT_ROOT\//}"
+    fi
+}
+
 # 初始化构建环境
 initialize_build_environment() {
     log INFO "开始初始化构建环境"
@@ -296,80 +525,12 @@ initialize_build_environment() {
         return 1
     }
 
-    # 3. 修改默认设置文件
-    log INFO "开始修改默认设置文件"
-    validate_file "$ZZZ_SETTINGS" || {
-        log ERROR "无法找到默认设置文件"
-        return 1
-    }
-
-    # 检查固件描述是否已修改
-    local current_desc=$(grep -oP "DISTRIB_DESCRIPTION='\K[^']*" "$ZZZ_SETTINGS")
-    local target_desc="LEDE Build by ${AUTHOR} "
-    
-    if [[ "$current_desc" == "$target_desc"* ]]; then
-        log INFO "固件描述已是最新，无需修改"
-    else
-        # 修改固件描述信息
-        if sed -i "s|DISTRIB_DESCRIPTION='LEDE[^']*'|DISTRIB_DESCRIPTION='${target_desc}'|g" "$ZZZ_SETTINGS"; then
-            log SUCCESS "固件描述修改成功: ${target_desc}"
-        else
-            log ERROR "固件描述修改失败"
-            return 1
-        fi
-    fi
-
-    # 添加网络和主机名配置
-    local network_config="uci set network.lan.ipaddr='192.168.8.1'   # 默认 IP 地址"
-    local hostname_config="uci set system.@system[0].hostname='M28C'"
-    local config_added=0
-
-    # 检查网络配置是否存在
-    if grep -qF "$network_config" "$ZZZ_SETTINGS"; then
-        log INFO "网络配置已存在，无需添加"
-    else
-        # 在描述信息后添加新配置
-        if sed -i "/DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} '/a \\${network_config}" "$ZZZ_SETTINGS"; then
-            log SUCCESS "添加网络配置"
-            config_added=1
-        else
-            log ERROR "添加网络配置失败"
-            return 1
-        fi
-    fi
-
-    # 检查主机名配置是否存在
-    if grep -qF "$hostname_config" "$ZZZ_SETTINGS"; then
-        log INFO "主机名配置已存在，无需添加"
-    else
-        # 在描述信息后添加新配置
-        if sed -i "/DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} '/a \\${hostname_config}" "$ZZZ_SETTINGS"; then
-            log SUCCESS "添加主机名配置"
-            config_added=1
-        else
-            log ERROR "添加主机名配置失败"
-            return 1
-        fi
-    fi
-
-    # 如果添加了新配置，确保它们位置正确
-    if [ $config_added -eq 1 ]; then
-        # 确保配置项在描述信息之后
-        if ! grep -A2 "DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} '" "$ZZZ_SETTINGS" | grep -q "$network_config"; then
-            log WARNING "网络配置位置不正确，尝试修复..."
-            sed -i "\|$network_config|d" "$ZZZ_SETTINGS"
-            sed -i "/DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} '/a \\${network_config}" "$ZZZ_SETTINGS"
-        fi
-        
-        if ! grep -A2 "DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} '" "$ZZZ_SETTINGS" | grep -q "$hostname_config"; then
-            log WARNING "主机名配置位置不正确，尝试修复..."
-            sed -i "\|$hostname_config|d" "$ZZZ_SETTINGS"
-            sed -i "/DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} '/a \\${hostname_config}" "$ZZZ_SETTINGS"
-        fi
-    fi
+    # 3. 初始化阶段配置文件定制
+    customize_config_files "init"
 
     log SUCCESS "构建环境初始化完成"
 }
+
 
 # 下载远程软件包
 download_remote_packages() {
@@ -613,20 +774,8 @@ compile_firmware() {
     # 获取当前时间作为构建时间
     local build_time=$(date +"%Y.%m.%d-%H:%M")
 
-    # 更新固件描述信息（添加构建时间）
-    log INFO "更新固件描述信息"
-    validate_file "$ZZZ_SETTINGS" || {
-        log ERROR "无法找到默认设置文件"
-        return 1
-    }
-
-    # 更新固件描述信息
-    if sed -i "s|DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR}[^']*'|DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} @ ${build_time} '|g" "$ZZZ_SETTINGS"; then
-        log SUCCESS "固件描述更新成功 (构建时间: ${build_time})"
-    else
-        log ERROR "固件描述更新失败"
-        return 1
-    fi
+    # 编译阶段配置文件定制 (更新固件描述等)
+    customize_config_files "build" "$build_time"
 
     pushd "$SRC_DIR" >/dev/null || return 1
 
@@ -793,9 +942,40 @@ copy_build_artifacts() {
     [ $copied_files -gt 0 ] || return 1
 }
 
+# 完整构建流程
+full_build_process() {
+    log INFO "启动完整构建流程"
+
+    download_remote_packages || {
+        log ERROR "下载软件包失败，构建中止"
+        return 1
+    }
+
+    install_custom_packages || {
+        log ERROR "安装软件包失败，构建中止"
+        return 1
+    }
+
+    update_and_install_feeds || {
+        log ERROR "更新feeds失败，构建中止"
+        return 1
+    }
+
+    compile_firmware || {
+        log ERROR "固件编译失败"
+        return 1
+    }
+    
+    copy_build_artifacts || {
+        log WARNING "构建产物复制失败，但构建已完成"
+    }
+
+    log SUCCESS "完整构建流程成功完成!"
+}
+
 # 显示帮助信息
 show_help() {
-    echo -e "${GREEN}${BOLD}OpenWrt高级构建管理系统 v3.2${NC}"
+    echo -e "${GREEN}${BOLD}OpenWrt高级构建管理系统 v3.6${NC}"
     echo -e "${CYAN}=============================================${NC}"
     echo
     echo -e "${BOLD}使用方法: $0 [命令]${NC}"
@@ -831,41 +1011,32 @@ show_help() {
     echo -e "  包配置文件:   ${UNDERLINE}${PKG_CONFIG/#$PROJECT_ROOT\//}${NC}"
     echo -e "  下载配置:     ${UNDERLINE}${DL_CONFIG/#$PROJECT_ROOT\//}${NC}"
     echo -e "  复制配置:     ${UNDERLINE}${COPY_CONFIG/#$PROJECT_ROOT\//}${NC}"
+    echo -e "  定制配置:     ${UNDERLINE}${CUSTOMIZE_CONFIG/#$PROJECT_ROOT\//}${NC}"
     echo -e "  资源目录:     ${UNDERLINE}${RES_DIR/#$PROJECT_ROOT\//}${NC}"
+    echo
+    echo -e "${CYAN}=============================================${NC}"
+    echo
+    echo -e "${BOLD}定制配置文件说明:${NC}"
+    echo "  定制配置文件使用分号分隔字段，格式如下:"
+    echo "      上下文;操作类型;目标文件;参数1;参数2"
+    echo
+    echo "  上下文: init(初始化阶段), build(编译阶段), all(所有阶段)"
+    echo "  操作类型: replace, insert-after, insert-before, append, delete"
+    echo "  目标文件: 要修改的文件路径"
+    echo "  参数: 根据操作类型需要1-2个参数"
+    echo
+    echo "  示例:"
+    echo "      init;replace;${ZZZ_SETTINGS};DISTRIB_DESCRIPTION='.*';DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} @ __BUILD_TIME__'"
+    echo "      build;replace;${ZZZ_SETTINGS};DISTRIB_DESCRIPTION='.*';DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} @ 2025.07.05-09:30'"
+    echo "      all;insert-after;${ZZZ_SETTINGS};DISTRIB_DESCRIPTION;uci set network.lan.ipaddr='192.168.8.1'"
+    echo
+    echo "  特殊占位符:"
+    echo "      __BUILD_TIME__ - 在编译阶段会被替换为实际构建时间"
+    echo "      ${AUTHOR} - 会被替换为全局作者名称"
     echo
     echo -e "${CYAN}=============================================${NC}"
 }
 
-# 完整构建流程
-full_build_process() {
-    log INFO "启动完整构建流程"
-
-    download_remote_packages || {
-        log ERROR "下载软件包失败，构建中止"
-        return 1
-    }
-
-    install_custom_packages || {
-        log ERROR "安装软件包失败，构建中止"
-        return 1
-    }
-
-    update_and_install_feeds || {
-        log ERROR "更新feeds失败，构建中止"
-        return 1
-    }
-
-    compile_firmware || {
-        log ERROR "固件编译失败"
-        return 1
-    }
-    
-    copy_build_artifacts || {
-        log WARNING "构建产物复制失败，但构建已完成"
-    }
-
-    log SUCCESS "完整构建流程成功完成!"
-}
 
 # 主函数
 main() {
