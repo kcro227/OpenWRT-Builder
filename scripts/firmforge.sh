@@ -2,7 +2,7 @@
 
 # =============================================
 # OpenWrt高级构建管理系统
-# 版本: 3.6
+# 版本: 3.7
 # 作者: KCrO
 # 更新: 2025-07-04
 # =============================================
@@ -35,7 +35,7 @@ BOLD='\033[1m'         # 粗体
 UNDERLINE='\033[4m'    # 下划线
 
 # 日志级别 (DEBUG, INFO, WARNING, ERROR)
-LOG_LEVEL=${LOG_LEVEL:-"DEBUG"}
+LOG_LEVEL=${LOG_LEVEL:-"INFO"}
 
 # 初始化日志系统
 init_logging() {
@@ -623,6 +623,7 @@ download_remote_packages() {
 
 # 更新已下载软件包
 update_downloaded_packages() {
+    local packages_to_update=("$@")  # 获取要更新的包名列表
     log INFO "开始更新已下载软件包"
     local total=0 success=0
     local pids=()
@@ -630,11 +631,31 @@ update_downloaded_packages() {
     # 读取下载配置文件
     local config_lines=()
     while IFS= read -r line; do
+        # 跳过注释行和空行
+        [[ $line =~ ^# || -z $line ]] && continue
+        
+        # 如果指定了要更新的包，检查当前行是否匹配
+        if [ ${#packages_to_update[@]} -gt 0 ]; then
+            local pkg_name=$(echo "$line" | awk '{print $2}')
+            if ! printf '%s\n' "${packages_to_update[@]}" | grep -q "^$pkg_name$"; then
+                continue  # 跳过不匹配的包
+            fi
+        fi
+        
         config_lines+=("$line")
-    done < <(grep -v '^#' "$DL_CONFIG" | grep -v '^$')
+    done < "$DL_CONFIG"
 
     total=${#config_lines[@]}
-    log DEBUG "找到 $total 个需要更新的软件包"
+    if [ $total -eq 0 ]; then
+        if [ ${#packages_to_update[@]} -gt 0 ]; then
+            log WARNING "未找到指定的包: ${packages_to_update[*]}"
+        else
+            log WARNING "没有需要更新的软件包"
+        fi
+        return 0
+    fi
+    
+    log INFO "找到 $total 个需要更新的软件包"
 
     # 并行处理每个软件包更新
     for line in "${config_lines[@]}"; do
@@ -682,12 +703,22 @@ update_downloaded_packages() {
                 fi
             fi
             
+            # 显示当前提交信息
+            local current_commit=$(git rev-parse --short HEAD)
+            log INFO "更新前版本: $name (${current_commit})"
+            
             # 带重试的更新
             local update_success=0
             for attempt in {1..3}; do
                 log INFO "更新尝试 (${attempt}/3): $name"
                 if git fetch --all --quiet && git reset --hard "origin/$branch" --quiet; then
-                    log SUCCESS "更新成功: $name"
+                    # 显示更新后的提交信息
+                    local new_commit=$(git rev-parse --short HEAD)
+                    if [ "$current_commit" != "$new_commit" ]; then
+                        log SUCCESS "更新成功: $name (${current_commit} → ${new_commit})"
+                    else
+                        log INFO "已是最新: $name (${current_commit})"
+                    fi
                     update_success=1
                     break
                 else
@@ -699,7 +730,8 @@ update_downloaded_packages() {
                         git reset --hard HEAD
                         git clean -df
                         if git pull --quiet; then
-                            log SUCCESS "强制更新成功: $name"
+                            local new_commit=$(git rev-parse --short HEAD)
+                            log SUCCESS "强制更新成功: $name (${current_commit} → ${new_commit})"
                             update_success=1
                             break
                         fi
@@ -975,10 +1007,10 @@ full_build_process() {
 
 # 显示帮助信息
 show_help() {
-    echo -e "${GREEN}${BOLD}OpenWrt高级构建管理系统 v3.6${NC}"
+    echo -e "${GREEN}${BOLD}OpenWrt高级构建管理系统 v3.7${NC}"
     echo -e "${CYAN}=============================================${NC}"
     echo
-    echo -e "${BOLD}使用方法: $0 [命令]${NC}"
+    echo -e "${BOLD}使用方法: $0 [命令] [选项]${NC}"
     echo
     echo -e "${YELLOW}${BOLD}环境管理命令:${NC}"
     echo "  init            初始化构建环境 (备份→安装→配置)"
@@ -988,7 +1020,7 @@ show_help() {
     echo -e "${YELLOW}${BOLD}包管理命令:${NC}"
     echo "  install         安装自定义软件包"
     echo "  download        下载远程软件包"
-    echo "  update          更新已下载的软件包"
+    echo "  update [包名...] 更新所有或指定的软件包"
     echo "  feeds           更新并安装feeds"
     echo
     echo -e "${YELLOW}${BOLD}构建命令:${NC}"
@@ -1015,6 +1047,10 @@ show_help() {
     echo -e "  资源目录:     ${UNDERLINE}${RES_DIR/#$PROJECT_ROOT\//}${NC}"
     echo
     echo -e "${CYAN}=============================================${NC}"
+    echo
+    echo -e "${BOLD}更新指定包示例:${NC}"
+    echo "  $0 update package1 package2"
+    echo "  $0 update \"package with space\""
     echo
     echo -e "${BOLD}定制配置文件说明:${NC}"
     echo "  定制配置文件使用分号分隔字段，格式如下:"
@@ -1053,7 +1089,10 @@ main() {
     backup) backup_critical_files ;;
     install) install_custom_packages ;;
     download) download_remote_packages ;;
-    update) update_downloaded_packages ;;
+    update) 
+        shift  # 移除命令名，保留参数
+        update_downloaded_packages "$@" 
+        ;;
     feeds) update_and_install_feeds ;;
     build) compile_firmware ;;
     clean-build) clean_compilation_files ;;
