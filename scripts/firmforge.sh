@@ -21,7 +21,7 @@ CUSTOMIZE_CONFIG="${SCRIPT_DIR}/customize.config"  # 配置文件定制规则
 
 # 固定文件路径
 FEEDS_CONF="${SRC_DIR}/feeds.conf.default"  # feeds配置文件
-ZZZ_SETTINGS="${SRC_DIR}/package/lean/default-settings/files/zzz-default-settings"  # 默认设置文件
+ZZZ_SETTINGS="${SRC_DIR}/package/emortal/default-settings/files/99-default-settings-chinese"  # 默认设置文件
 
 # 颜色定义
 RED='\033[0;31m'       # 红色
