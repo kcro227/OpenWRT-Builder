@@ -865,8 +865,6 @@ run_interactive_configuration() {
     local result=$?
     popd >/dev/null || return 1
 
-    # 重新启用日志重定向
-    exec > >(tee -a "$LOG_FILE") 2>&1
 
     if [ $result -eq 0 ]; then
         log SUCCESS "配置菜单操作完成"
