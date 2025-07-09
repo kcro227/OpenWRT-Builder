@@ -54,30 +54,33 @@ init_logging() {
     fi
 }
 
-# 日志函数
+# 日志函数 - 优化后的版本
 log() {
     local level=$1
     local message=$2
-    local timestamp=$(date +"%T.%3N")  # 带毫秒的时间戳
+    local timestamp=$(date +"%T")  # 简化时间戳格式
 
     # 日志级别过滤
-    declare -A log_levels=([DEBUG]=0 [INFO]=1 [WARNING]=2 [ERROR]=3)
+    declare -A log_levels=([DEBUG]=0 [INFO]=1 [SUCCESS]=2 [WARNING]=3 [ERROR]=4)
     [[ ${log_levels[$level]} -lt ${log_levels[$LOG_LEVEL]} ]] && return
 
-    # 日志颜色
-    local color
+    # 日志图标和颜色
+    local icon color
     case $level in
-    "DEBUG") color="${MAGENTA}" ;;
-    "INFO") color="${BLUE}" ;;
-    "SUCCESS") color="${GREEN}" ;;
-    "WARNING") color="${YELLOW}" ;;
-    "ERROR") color="${RED}" ;;
-    *) color="${NC}" ;;
+        "DEBUG")   icon="🛠️ "  ; color="${MAGENTA}" ;;
+        "INFO")    icon="ℹ️ "  ; color="${BLUE}" ;;
+        "SUCCESS") icon="✅ "  ; color="${GREEN}" ;;
+        "WARNING") icon="⚠️ "  ; color="${YELLOW}" ;;
+        "ERROR")   icon="❌ "  ; color="${RED}" ;;
+        *)         icon="🔹 "  ; color="${NC}" ;;
     esac
 
+    # 统一日志格式 - 添加对齐
+    local level_padded=$(printf "%-7s" "[$level]")
+    
     # 日志格式
-    local log_msg="[${timestamp}] ${BOLD}${color}${level}${NC}: ${message}"
-    echo -e "$log_msg" >&3  # 输出到保存的标准输出
+    local log_msg="[${timestamp}] ${BOLD}${color}${level_padded}${NC} ${icon} ${message}"
+    echo -e "$log_msg" >&3
 }
 
 # 错误处理函数
@@ -85,6 +88,7 @@ trap_error() {
     local lineno=$1
     local msg=$2
     log ERROR "脚本异常退出! 行号: $lineno, 错误: $msg"
+    log ERROR "建议: 检查脚本参数或系统资源，查看日志获取详细信息"
     exit 1
 }
 
@@ -92,6 +96,7 @@ trap_error() {
 validate_dir() {
     [ -d "$1" ] || {
         log ERROR "目录不存在: ${1/#$PROJECT_ROOT\//}"  # 显示相对路径
+        log INFO "建议: 检查路径是否正确或运行 'init' 命令初始化环境"
         return 1
     }
 }
@@ -100,6 +105,7 @@ validate_dir() {
 validate_file() {
     [ -f "$1" ] || {
         log ERROR "文件不存在: ${1/#$PROJECT_ROOT\//}"  # 显示相对路径
+        log INFO "建议: 检查文件路径或确认配置文件已创建"
         return 1
     }
 }
@@ -107,27 +113,36 @@ validate_file() {
 # 用户确认函数
 confirm_action() {
     local msg=$1
-    echo -en "${YELLOW}${msg} (y/N) ${NC}"  # 黄色提示
+    echo -en "${YELLOW}${BOLD}${msg} (y/N) ${NC}"  # 黄色粗体提示
     read -r response
-    [[ $response =~ ^[Yy]$ ]] || return 1  # 只有输入y/Y才继续
+    [[ $response =~ ^[Yy]$ ]] || return 1
     return 0
 }
 
-# 进度指示器
+# 进度指示器 - 优化后的版本
 show_progress() {
     local pid=$1
     local msg=$2
     local delay=0.2
     local spin_chars=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷')  # 旋转动画字符
 
+    # 如果是非交互终端则不显示动画
+    if [ ! -t 1 ]; then
+        echo -ne "${BLUE}⏳${NC} ${msg}..."
+        wait "$pid"
+        echo -e "\r${GREEN}✓${NC} ${msg}完成"
+        return
+    fi
+
     # 显示进度动画直到进程结束
+    local i=0
     while kill -0 "$pid" 2>/dev/null; do
-        for char in "${spin_chars[@]}"; do
-            echo -ne "\r${BLUE}${char}${NC} ${msg}"  # 蓝色动画
-            sleep $delay
-        done
+        local char="${spin_chars[$i]}"
+        echo -ne "\r${BLUE}${char}${NC} ${msg}"
+        sleep $delay
+        i=$(( (i+1) % ${#spin_chars[@]} ))
     done
-    echo -ne "\r${GREEN}✓${NC} ${msg}完成"  # 绿色完成标记
+    echo -ne "\r${GREEN}✓${NC} ${msg}完成"
     echo
 }
 
@@ -141,6 +156,8 @@ backup_critical_files() {
         "$FEEDS_CONF"
         "$ZZZ_SETTINGS"
     )
+    
+    local backup_count=0
 
     for target in "${backup_targets[@]}"; do
         [ -f "$target" ] || {
@@ -152,11 +169,18 @@ backup_critical_files() {
         local bak_file="${BACKUP_DIR}/$(basename "$target").$(date +%Y%m%d-%H%M%S).bak"
         if cp -v "$target" "$bak_file"; then
             log SUCCESS "备份成功: ${bak_file/#$PROJECT_ROOT\//}"
+            ((backup_count++))
         else
             log ERROR "备份失败: ${target/#$PROJECT_ROOT\//}"
             return 1
         fi
     done
+    
+    if [ $backup_count -gt 0 ]; then
+        log SUCCESS "关键文件备份完成 (共备份 ${backup_count} 个文件)"
+    else
+        log WARNING "没有需要备份的文件"
+    fi
 }
 
 # 安装自定义软件包
@@ -172,7 +196,13 @@ install_custom_packages() {
     done < <(grep -v '^#' "$PKG_CONFIG" | grep -v '^$')
 
     total=${#config_lines[@]}
-    log DEBUG "找到 $total 个需要安装的软件包"
+    
+    if [ $total -eq 0 ]; then
+        log WARNING "没有找到需要安装的自定义软件包"
+        return 0
+    fi
+    
+    log INFO "发现 ${total} 个需要安装的软件包"
 
     # 并行处理每个软件包
     for line in "${config_lines[@]}"; do
@@ -195,7 +225,10 @@ install_custom_packages() {
             dest_path="${PROJECT_ROOT}/${dest_base}/package/${AUTHOR}/${pkg_basename}"
 
             # 验证源目录
-            validate_dir "$src_path" || exit 1
+            validate_dir "$src_path" || {
+                log ERROR "软件包源目录不存在: ${src_path/#$PROJECT_ROOT\//}"
+                exit 1
+            }
 
             # 创建目标目录
             mkdir -p "$(dirname "$dest_path")" || {
@@ -225,13 +258,17 @@ install_custom_packages() {
 
     # 等待所有进程完成
     for pid in "${pids[@]}"; do
-        if wait "$pid"; then
-            ((success++))
-        fi
+        show_progress $pid "安装软件包" &
+        wait $pid && ((success++))
     done
 
-    log INFO "软件包安装完成 (成功: ${success}/${total})"
-    [ "$success" -eq "$total" ] || return 1
+    if [ $success -eq $total ]; then
+        log SUCCESS "软件包安装完成 (${success}/${total} 全部成功)"
+    else
+        log ERROR "软件包安装完成 (成功: ${success}/${total}, 失败: $((total-success)))"
+        log WARNING "建议: 检查失败的软件包路径和权限设置"
+        return 1
+    fi
 }
 
 # 清理构建环境
@@ -243,6 +280,7 @@ clean_build_environment() {
     }
 
     log INFO "开始清理构建环境"
+    local deleted_dirs=0 restored_files=0
 
     # 删除所有自定义软件包目录
     while IFS= read -r line; do
@@ -255,6 +293,7 @@ clean_build_environment() {
         [ -d "$custom_pkg_dir" ] && {
             if rm -rf "$custom_pkg_dir"; then
                 log SUCCESS "已删除: ${custom_pkg_dir/#$PROJECT_ROOT\//}"
+                ((deleted_dirs++))
             else
                 log ERROR "删除失败: ${custom_pkg_dir/#$PROJECT_ROOT\//}"
             fi
@@ -272,6 +311,7 @@ clean_build_environment() {
         [ -n "$latest_bak" ] && {
             if cp -f "$latest_bak" "$file"; then
                 log SUCCESS "已恢复: ${file/#$PROJECT_ROOT\//}"
+                ((restored_files++))
             else
                 log ERROR "恢复失败: ${file/#$PROJECT_ROOT\//}"
             fi
@@ -279,8 +319,8 @@ clean_build_environment() {
     done
 
     log SUCCESS "构建环境清理完成"
+    log INFO "已删除 ${deleted_dirs} 个目录, 恢复 ${restored_files} 个文件"
 }
-
 
 # 应用定制规则
 apply_customization() {
@@ -406,6 +446,7 @@ customize_config_files() {
     local build_time="$2"  # 编译时间 (仅用于build上下文)
     
     log INFO "开始${context}阶段配置文件定制"
+    local applied_rules=0
     
     # 检查定制配置文件是否存在
     validate_file "$CUSTOMIZE_CONFIG" || {
@@ -448,7 +489,9 @@ customize_config_files() {
         fi
         
         # 应用定制规则
-        apply_customization "$target_file" "$action" "$arg1" "$arg2"
+        if apply_customization "$target_file" "$action" "$arg1" "$arg2"; then
+            ((applied_rules++))
+        fi
         
     done < "$CUSTOMIZE_CONFIG"
     
@@ -462,17 +505,20 @@ customize_config_files() {
             customize_default_settings_build "$build_time"
         fi
     else
-        log SUCCESS "${context}阶段配置文件定制完成"
+        log SUCCESS "${context}阶段配置文件定制完成 (应用 ${applied_rules}/${line_count} 条规则)"
     fi
 }
 
 # 初始化阶段默认设置定制
 customize_default_settings_init() {
     log INFO "应用初始化阶段默认设置"
+    local applied=0
     
     # 1. 修改固件描述信息 (使用占位符)
     local target_desc="LEDE Build by ${AUTHOR} @ __BUILD_TIME__"
-    apply_customization "$ZZZ_SETTINGS" "replace" "DISTRIB_DESCRIPTION='.*'" "DISTRIB_DESCRIPTION='${target_desc}'"
+    if apply_customization "$ZZZ_SETTINGS" "replace" "DISTRIB_DESCRIPTION='.*'" "DISTRIB_DESCRIPTION='${target_desc}'"; then
+        ((applied++))
+    fi
     
     # 2. 添加网络和主机名配置
     local network_config="uci set network.lan.ipaddr='192.168.8.1'   # 默认 IP 地址"
@@ -480,23 +526,30 @@ customize_default_settings_init() {
     
     # 添加网络配置（仅当不存在时添加）
     if ! grep -qF "$network_config" "$ZZZ_SETTINGS"; then
-        apply_customization "$ZZZ_SETTINGS" "insert-after" "DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} @ __BUILD_TIME__'" "$network_config"
+        if apply_customization "$ZZZ_SETTINGS" "insert-after" "DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} @ __BUILD_TIME__'" "$network_config"; then
+            ((applied++))
+        fi
     else
         log WARNING "跳过重复网络配置: ${network_config}"
     fi
     
     # 添加主机名配置（仅当不存在时添加）
     if ! grep -qF "$hostname_config" "$ZZZ_SETTINGS"; then
-        apply_customization "$ZZZ_SETTINGS" "insert-after" "DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} @ __BUILD_TIME__'" "$hostname_config"
+        if apply_customization "$ZZZ_SETTINGS" "insert-after" "DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} @ __BUILD_TIME__'" "$hostname_config"; then
+            ((applied++))
+        fi
     else
         log WARNING "跳过重复主机名配置: ${hostname_config}"
     fi
+    
+    log INFO "应用了 ${applied} 条默认设置"
 }
 
 # 编译阶段默认设置定制
 customize_default_settings_build() {
     local build_time="$1"
     log INFO "应用编译阶段默认设置"
+    local applied=0
     
     # 更新固件描述信息 (替换为实际构建时间)
     local target_desc="LEDE Build by ${AUTHOR} @ ${build_time}"
@@ -504,14 +557,18 @@ customize_default_settings_build() {
     # 使用更宽泛的正则表达式匹配，确保即使占位符已被替换也能匹配
     if sed -i "s|DISTRIB_DESCRIPTION='.*'|DISTRIB_DESCRIPTION='${target_desc}'|g" "$ZZZ_SETTINGS"; then
         log SUCCESS "构建时间更新成功: ${ZZZ_SETTINGS/#$PROJECT_ROOT\//}"
+        ((applied++))
     else
         log ERROR "构建时间更新失败: ${ZZZ_SETTINGS/#$PROJECT_ROOT\//}"
     fi
+    
+    log INFO "应用了 ${applied} 条默认设置"
 }
 
 # 初始化构建环境
 initialize_build_environment() {
     log INFO "开始初始化构建环境"
+    local start_time=$(date +%s)
     
     # 1. 备份关键文件
     backup_critical_files || {
@@ -528,13 +585,15 @@ initialize_build_environment() {
     # 3. 初始化阶段配置文件定制
     customize_config_files "init"
 
-    log SUCCESS "构建环境初始化完成"
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    log SUCCESS "构建环境初始化完成 (耗时: ${duration}秒)"
 }
-
 
 # 下载远程软件包
 download_remote_packages() {
     log INFO "开始下载远程软件包"
+    local start_time=$(date +%s)
     local total=0 success=0
     local pids=()
 
@@ -545,7 +604,13 @@ download_remote_packages() {
     done < <(grep -v '^#' "$DL_CONFIG" | grep -v '^$')
 
     total=${#config_lines[@]}
-    log DEBUG "找到 $total 个需要下载的软件包"
+    
+    if [ $total -eq 0 ]; then
+        log WARNING "没有找到需要下载的软件包"
+        return 0
+    fi
+    
+    log INFO "发现 ${total} 个需要下载的软件包"
 
     # 并行处理每个软件包下载
     for line in "${config_lines[@]}"; do
@@ -617,14 +682,23 @@ download_remote_packages() {
         wait $pid && ((success++))
     done
 
-    log INFO "软件包下载完成 (成功: ${success}/${total})"
-    [ "$success" -eq "$total" ] || return 1
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    
+    if [ $success -eq $total ]; then
+        log SUCCESS "软件包下载完成 (${success}/${total} 全部成功, 耗时: ${duration}秒)"
+    else
+        log ERROR "软件包下载完成 (成功: ${success}/${total}, 失败: $((total-success)), 耗时: ${duration}秒)"
+        log WARNING "建议: 检查网络连接或仓库URL是否正确"
+        return 1
+    fi
 }
 
 # 更新已下载软件包
 update_downloaded_packages() {
     local packages_to_update=("$@")  # 获取要更新的包名列表
     log INFO "开始更新已下载软件包"
+    local start_time=$(date +%s)
     local total=0 success=0
     local pids=()
     local results=()  # 存储子任务结果
@@ -656,7 +730,7 @@ update_downloaded_packages() {
         return 0
     fi
     
-    log INFO "找到 $total 个需要更新的软件包"
+    log INFO "发现 ${total} 个需要更新的软件包"
 
     # 并行处理每个软件包更新
     for line in "${config_lines[@]}"; do
@@ -769,8 +843,16 @@ update_downloaded_packages() {
         fi
     done
     
-    log INFO "软件包更新完成 (成功: ${success}/${total})"
-    [ "$success" -eq "$total" ] || return 1
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    
+    if [ $success -eq $total ]; then
+        log SUCCESS "软件包更新完成 (${success}/${total} 全部成功, 耗时: ${duration}秒)"
+    else
+        log ERROR "软件包更新完成 (成功: ${success}/${total}, 失败: $((total-success)), 耗时: ${duration}秒)"
+        log WARNING "建议: 检查网络连接或仓库权限设置"
+        return 1
+    fi
 }
 
 # 更新并安装feeds
@@ -821,6 +903,7 @@ compile_firmware() {
     pushd "$SRC_DIR" >/dev/null || return 1
 
     # 显示编译进度
+    log INFO "使用 ${jobs} 个线程进行编译..."
     make -j"$jobs" V=s
     local result=$?
     popd >/dev/null || return 1
@@ -837,6 +920,7 @@ compile_firmware() {
         log SUCCESS "固件编译成功! 耗时: $compile_time"
     else
         log ERROR "固件编译失败! 耗时: $compile_time"
+        log WARNING "建议: 检查编译日志中的错误信息"
     fi
 }
 
@@ -874,7 +958,6 @@ run_interactive_configuration() {
     local result=$?
     popd >/dev/null || return 1
 
-
     if [ $result -eq 0 ]; then
         log SUCCESS "配置菜单操作完成"
     else
@@ -888,6 +971,7 @@ copy_build_artifacts() {
     log INFO "开始复制构建产物"
     local total_files=0 copied_files=0
     local config_found=0
+    local start_time=$(date +%s)
     
     # 检查配置文件是否存在
     validate_file "$COPY_CONFIG" || {
@@ -967,15 +1051,18 @@ copy_build_artifacts() {
         
     done < "$COPY_CONFIG"
     
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    
     # 检查是否有有效的配置行
     if [ $config_found -eq 0 ]; then
         log WARNING "配置文件中没有有效的配置行"
     fi
     
     if [ $copied_files -gt 0 ]; then
-        log SUCCESS "构建产物复制完成 (总计: $copied_files/$total_files)"
+        log SUCCESS "构建产物复制完成 (总计: $copied_files/$total_files, 耗时: ${duration}秒)"
     else
-        log WARNING "没有复制任何文件"
+        log WARNING "没有复制任何文件 (耗时: ${duration}秒)"
     fi
     
     [ $copied_files -gt 0 ] || return 1
@@ -984,6 +1071,7 @@ copy_build_artifacts() {
 # 完整构建流程
 full_build_process() {
     log INFO "启动完整构建流程"
+    local start_time=$(date +%s)
 
     update_downloaded_packages || {
         log ERROR "更新软件包失败，构建中止"
@@ -1011,7 +1099,9 @@ full_build_process() {
         log WARNING "构建产物复制失败，但构建已完成"
     }
 
-    log SUCCESS "完整构建流程成功完成!"
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    log SUCCESS "完整构建流程成功完成! (总耗时: ${duration}秒)"
 }
 
 # 显示帮助信息
