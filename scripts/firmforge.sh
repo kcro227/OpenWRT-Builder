@@ -627,6 +627,7 @@ update_downloaded_packages() {
     log INFO "开始更新已下载软件包"
     local total=0 success=0
     local pids=()
+    local results=()  # 存储子任务结果
 
     # 读取下载配置文件
     local config_lines=()
@@ -660,8 +661,19 @@ update_downloaded_packages() {
     # 并行处理每个软件包更新
     for line in "${config_lines[@]}"; do
         (
-            # 设置子shell的错误处理
-            set -e
+            # 设置子shell的错误处理和清理函数
+            cleanup() {
+                # 如果当前在目标目录中，弹出目录堆栈
+                if [[ "$(dirs)" != "$original_dir" ]]; then
+                    popd &>/dev/null || true
+                fi
+            }
+            
+            # 保存原始目录
+            original_dir="$(dirs)"
+            trap cleanup EXIT
+            
+            set -e  # 启用错误退出
             
             # 解析配置字段
             type=$(echo "$line" | awk '{print $1}')
@@ -687,7 +699,7 @@ update_downloaded_packages() {
                 exit 0
             fi
             
-            # 进入目录
+            # 进入目录（使用安全pushd）
             if ! pushd "$target_dir" >/dev/null; then
                 log ERROR "无法进入目录: ${target_dir/#$PROJECT_ROOT\//}"
                 exit 1
@@ -696,7 +708,7 @@ update_downloaded_packages() {
             # 分支处理
             current_branch=$(git symbolic-ref --short HEAD 2>/dev/null)
             if [[ "$current_branch" != "$branch" ]]; then
-                log INFO "切换分支: $current_branch -> $branch"
+                log DEBUG "切换分支: $current_branch -> $branch"
                 if ! git checkout -q "$branch"; then
                     log ERROR "分支切换失败: $name → $branch"
                     exit 1
@@ -705,12 +717,12 @@ update_downloaded_packages() {
             
             # 显示当前提交信息
             local current_commit=$(git rev-parse --short HEAD)
-            log INFO "更新前版本: $name (${current_commit})"
+            log DEBUG "更新前版本: $name (${current_commit})"
             
             # 带重试的更新
             local update_success=0
             for attempt in {1..3}; do
-                log INFO "更新尝试 (${attempt}/3): $name"
+                log DEBUG "更新尝试 (${attempt}/3): $name"
                 if git fetch --all --quiet && git reset --hard "origin/$branch" --quiet; then
                     # 显示更新后的提交信息
                     local new_commit=$(git rev-parse --short HEAD)
@@ -738,9 +750,6 @@ update_downloaded_packages() {
                     fi
                 fi
             done
-            
-            # 退出目录
-            popd >/dev/null
             
             # 根据更新结果退出
             if [ $update_success -eq 1 ]; then
@@ -976,8 +985,8 @@ copy_build_artifacts() {
 full_build_process() {
     log INFO "启动完整构建流程"
 
-    download_remote_packages || {
-        log ERROR "下载软件包失败，构建中止"
+    update_downloaded_packages || {
+        log ERROR "更新软件包失败，构建中止"
         return 1
     }
 
@@ -985,6 +994,8 @@ full_build_process() {
         log ERROR "安装软件包失败，构建中止"
         return 1
     }
+
+    customize_config_files "init"
 
     update_and_install_feeds || {
         log ERROR "更新feeds失败，构建中止"
