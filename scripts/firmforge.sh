@@ -8,49 +8,49 @@
 # =============================================
 
 # 全局常量
-AUTHOR="KCrO"  # 作者信息，用于路径和固件描述
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"  # 脚本所在目录
-PROJECT_ROOT="${SCRIPT_DIR}/.."  # 项目根目录
-RES_DIR="${PROJECT_ROOT}/resources"  # 资源目录
-SRC_DIR="${PROJECT_ROOT}/src"  # 源码目录
-PKG_CONFIG="${SCRIPT_DIR}/packages.config"  # 软件包安装配置文件
-DL_CONFIG="${SCRIPT_DIR}/download.config"  # 软件包下载配置文件
-BACKUP_DIR="${RES_DIR}/backups"  # 备份文件目录
-COPY_CONFIG="${SCRIPT_DIR}/copy.config"  # 文件复制配置文件
-CUSTOMIZE_CONFIG="${SCRIPT_DIR}/customize.config"  # 配置文件定制规则
+AUTHOR="KCrO"                                              # 作者信息，用于路径和固件描述
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # 脚本所在目录
+PROJECT_ROOT="${SCRIPT_DIR}/.."                            # 项目根目录
+RES_DIR="${PROJECT_ROOT}/resources"                        # 资源目录
+SRC_DIR="${PROJECT_ROOT}/src"                              # 源码目录
+PKG_CONFIG="${SCRIPT_DIR}/packages.config"                 # 软件包安装配置文件
+DL_CONFIG="${SCRIPT_DIR}/download.config"                  # 软件包下载配置文件
+BACKUP_DIR="${RES_DIR}/backups"                            # 备份文件目录
+COPY_CONFIG="${SCRIPT_DIR}/copy.config"                    # 文件复制配置文件
+CUSTOMIZE_CONFIG="${SCRIPT_DIR}/customize.config"          # 配置文件定制规则
 
 # 固定文件路径
-FEEDS_CONF="${SRC_DIR}/feeds.conf.default"  # feeds配置文件
-ZZZ_SETTINGS="${SRC_DIR}/package/emortal/default-settings/files/99-default-settings-chinese"  # 默认设置文件
+FEEDS_CONF="${SRC_DIR}/feeds.conf.default"                                                   # feeds配置文件
+ZZZ_SETTINGS="${SRC_DIR}/package/emortal/default-settings/files/99-default-settings-chinese" # 默认设置文件
 
 # 颜色定义
-RED='\033[0;31m'       # 红色
-GREEN='\033[0;32m'     # 绿色
-YELLOW='\033[0;33m'    # 黄色
-BLUE='\033[0;34m'      # 蓝色
-MAGENTA='\033[0;35m'   # 紫色
-CYAN='\033[0;36m'      # 青色
-NC='\033[0m'           # 重置颜色
-BOLD='\033[1m'         # 粗体
-UNDERLINE='\033[4m'    # 下划线
+RED='\033[0;31m'     # 红色
+GREEN='\033[0;32m'   # 绿色
+YELLOW='\033[0;33m'  # 黄色
+BLUE='\033[0;34m'    # 蓝色
+MAGENTA='\033[0;35m' # 紫色
+CYAN='\033[0;36m'    # 青色
+NC='\033[0m'         # 重置颜色
+BOLD='\033[1m'       # 粗体
+UNDERLINE='\033[4m'  # 下划线
 
 # 日志级别 (DEBUG, INFO, WARNING, ERROR)
 LOG_LEVEL=${LOG_LEVEL:-"INFO"}
 
 # 初始化日志系统
 init_logging() {
-    LOG_DIR="${RES_DIR}/logs"  # 日志目录
-    mkdir -p "$LOG_DIR"  # 创建日志目录
+    LOG_DIR="${RES_DIR}/logs" # 日志目录
+    mkdir -p "$LOG_DIR"       # 创建日志目录
 
     # 日志轮转 (保留最近7个日志)
     find "$LOG_DIR" -name 'build-*.log' -mtime +7 -exec rm -f {} \;
 
-    local log_file="${LOG_DIR}/build-$(date +%Y.%m.%d-%H:%M:%S).log"  # 日志文件名
-    exec 3>&1 4>&2  # 保存标准输出和错误输出
+    local log_file="${LOG_DIR}/build-$(date +%Y.%m.%d-%H:%M:%S).log" # 日志文件名
+    exec 3>&1 4>&2                                                   # 保存标准输出和错误输出
 
     # 对非交互命令才重定向日志
     if [[ $1 != "config" ]]; then
-        exec > >(tee -a "$log_file") 2>&1  # 重定向所有输出到日志文件和终端
+        exec > >(tee -a "$log_file") 2>&1 # 重定向所有输出到日志文件和终端
     fi
 }
 
@@ -58,7 +58,7 @@ init_logging() {
 log() {
     local level=$1
     local message=$2
-    local timestamp=$(date +"%T.%3N")  # 带毫秒的时间戳
+    local timestamp=$(date +"%T.%3N") # 带毫秒的时间戳
 
     # 日志级别过滤
     declare -A log_levels=([DEBUG]=0 [INFO]=1 [WARNING]=2 [ERROR]=3)
@@ -77,7 +77,7 @@ log() {
 
     # 日志格式
     local log_msg="[${timestamp}] ${BOLD}${color}${level}${NC}: ${message}"
-    echo -e "$log_msg" >&3  # 输出到保存的标准输出
+    echo -e "$log_msg" >&3 # 输出到保存的标准输出
 }
 
 # 错误处理函数
@@ -91,7 +91,7 @@ trap_error() {
 # 目录验证函数
 validate_dir() {
     [ -d "$1" ] || {
-        log ERROR "目录不存在: ${1/#$PROJECT_ROOT\//}"  # 显示相对路径
+        log ERROR "目录不存在: ${1/#$PROJECT_ROOT\//}" # 显示相对路径
         return 1
     }
 }
@@ -99,7 +99,7 @@ validate_dir() {
 # 文件验证函数
 validate_file() {
     [ -f "$1" ] || {
-        log ERROR "文件不存在: ${1/#$PROJECT_ROOT\//}"  # 显示相对路径
+        log ERROR "文件不存在: ${1/#$PROJECT_ROOT\//}" # 显示相对路径
         return 1
     }
 }
@@ -107,9 +107,9 @@ validate_file() {
 # 用户确认函数
 confirm_action() {
     local msg=$1
-    echo -en "${YELLOW}${msg} (y/N) ${NC}"  # 黄色提示
+    echo -en "${YELLOW}${msg} (y/N) ${NC}" # 黄色提示
     read -r response
-    [[ $response =~ ^[Yy]$ ]] || return 1  # 只有输入y/Y才继续
+    [[ $response =~ ^[Yy]$ ]] || return 1 # 只有输入y/Y才继续
     return 0
 }
 
@@ -118,23 +118,23 @@ show_progress() {
     local pid=$1
     local msg=$2
     local delay=0.2
-    local spin_chars=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷')  # 旋转动画字符
+    local spin_chars=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷') # 旋转动画字符
 
     # 显示进度动画直到进程结束
     while kill -0 "$pid" 2>/dev/null; do
         for char in "${spin_chars[@]}"; do
-            echo -ne "\r${BLUE}${char}${NC} ${msg}"  # 蓝色动画
+            echo -ne "\r${BLUE}${char}${NC} ${msg}" # 蓝色动画
             sleep $delay
         done
     done
-    echo -ne "\r${GREEN}✓${NC} ${msg}完成"  # 绿色完成标记
+    echo -ne "\r${GREEN}✓${NC} ${msg}完成" # 绿色完成标记
     echo
 }
 
 # 关键文件备份
 backup_critical_files() {
     log INFO "开始备份关键文件"
-    mkdir -p "$BACKUP_DIR"  # 确保备份目录存在
+    mkdir -p "$BACKUP_DIR" # 确保备份目录存在
 
     # 需要备份的文件列表
     local backup_targets=(
@@ -220,7 +220,7 @@ install_custom_packages() {
                 exit 1
             fi
         ) &
-        pids+=($!)  # 保存后台进程ID
+        pids+=($!) # 保存后台进程ID
     done
 
     # 等待所有进程完成
@@ -281,7 +281,6 @@ clean_build_environment() {
     log SUCCESS "构建环境清理完成"
 }
 
-
 # 应用定制规则
 apply_customization() {
     # 使用实际变量值替换路径中的占位符
@@ -289,172 +288,172 @@ apply_customization() {
     local action="$2"
     local arg1="$3"
     local arg2="$4"
-    
+
     # 验证目标文件是否存在
     validate_file "$target_file" || {
         log WARNING "目标文件不存在: ${target_file/#$PROJECT_ROOT\//}"
         return 1
     }
-    
+
     # 根据操作类型执行相应操作
     case "$action" in
-        "replace")
-            # 替换操作: 替换目标文件中的特定字符串
-            if [ -z "$arg1" ] || [ -z "$arg2" ]; then
-                log WARNING "替换操作需要两个参数: 查找字符串和替换字符串"
-                return 1
-            fi
-            
-            if sed -i "s|${arg1}|${arg2}|g" "$target_file"; then
-                log SUCCESS "替换成功: ${target_file/#$PROJECT_ROOT\//}"
-            else
-                log ERROR "替换失败: ${target_file/#$PROJECT_ROOT\//}"
-                return 1
-            fi
-            ;;
-            
-        "insert-after")
-            # 插入操作: 在匹配行后插入内容
-            if [ -z "$arg1" ] || [ -z "$arg2" ]; then
-                log WARNING "插入操作需要两个参数: 匹配字符串和插入内容"
-                return 1
-            fi
-            
-            # 检查是否已存在相同内容
-            if grep -qF "$arg2" "$target_file"; then
-                log WARNING "跳过重复插入: 目标文件中已存在相同内容: ${arg2}"
-                return 0
-            fi
-            
-            if sed -i "/${arg1}/a \\${arg2}" "$target_file"; then
-                log SUCCESS "插入成功: ${target_file/#$PROJECT_ROOT\//}"
-            else
-                log ERROR "插入失败: ${target_file/#$PROJECT_ROOT\//}"
-                return 1
-            fi
-            ;;
-            
-        "insert-before")
-            # 插入操作: 在匹配行前插入内容
-            if [ -z "$arg1" ] || [ -z "$arg2" ]; then
-                log WARNING "插入操作需要两个参数: 匹配字符串和插入内容"
-                return 1
-            fi
-            
-            # 检查是否已存在相同内容
-            if grep -qF "$arg2" "$target_file"; then
-                log WARNING "跳过重复插入: 目标文件中已存在相同内容: ${arg2}"
-                return 0
-            fi
-            
-            if sed -i "/${arg1}/i \\${arg2}" "$target_file"; then
-                log SUCCESS "插入成功: ${target_file/#$PROJECT_ROOT\//}"
-            else
-                log ERROR "插入失败: ${target_file/#$PROJECT_ROOT\//}"
-                return 1
-            fi
-            ;;
-            
-        "append")
-            # 追加操作: 在文件末尾追加内容
-            if [ -z "$arg1" ]; then
-                log WARNING "追加操作需要内容参数"
-                return 1
-            fi
-            
-            # 检查是否已存在相同内容
-            if grep -qF "$arg1" "$target_file"; then
-                log WARNING "跳过重复追加: 目标文件中已存在相同内容: ${arg1}"
-                return 0
-            fi
-            
-            if echo -e "$arg1" >> "$target_file"; then
-                log SUCCESS "追加成功: ${target_file/#$PROJECT_ROOT\//}"
-            else
-                log ERROR "追加失败: ${target_file/#$PROJECT_ROOT\//}"
-                return 1
-            fi
-            ;;
-            
-        "delete")
-            # 删除操作: 删除匹配的行
-            if [ -z "$arg1" ]; then
-                log WARNING "删除操作需要匹配字符串"
-                return 1
-            fi
-            
-            if sed -i "/${arg1}/d" "$target_file"; then
-                log SUCCESS "删除成功: ${target_file/#$PROJECT_ROOT\//}"
-            else
-                log ERROR "删除失败: ${target_file/#$PROJECT_ROOT\//}"
-                return 1
-            fi
-            ;;
-            
-        *)
-            log WARNING "未知操作类型: $action"
+    "replace")
+        # 替换操作: 替换目标文件中的特定字符串
+        if [ -z "$arg1" ] || [ -z "$arg2" ]; then
+            log WARNING "替换操作需要两个参数: 查找字符串和替换字符串"
             return 1
-            ;;
+        fi
+
+        if sed -i "s|${arg1}|${arg2}|g" "$target_file"; then
+            log SUCCESS "替换成功: ${target_file/#$PROJECT_ROOT\//}"
+        else
+            log ERROR "替换失败: ${target_file/#$PROJECT_ROOT\//}"
+            return 1
+        fi
+        ;;
+
+    "insert-after")
+        # 插入操作: 在匹配行后插入内容
+        if [ -z "$arg1" ] || [ -z "$arg2" ]; then
+            log WARNING "插入操作需要两个参数: 匹配字符串和插入内容"
+            return 1
+        fi
+
+        # 检查是否已存在相同内容
+        if grep -qF "$arg2" "$target_file"; then
+            log WARNING "跳过重复插入: 目标文件中已存在相同内容: ${arg2}"
+            return 0
+        fi
+
+        if sed -i "/${arg1}/a \\${arg2}" "$target_file"; then
+            log SUCCESS "插入成功: ${target_file/#$PROJECT_ROOT\//}"
+        else
+            log ERROR "插入失败: ${target_file/#$PROJECT_ROOT\//}"
+            return 1
+        fi
+        ;;
+
+    "insert-before")
+        # 插入操作: 在匹配行前插入内容
+        if [ -z "$arg1" ] || [ -z "$arg2" ]; then
+            log WARNING "插入操作需要两个参数: 匹配字符串和插入内容"
+            return 1
+        fi
+
+        # 检查是否已存在相同内容
+        if grep -qF "$arg2" "$target_file"; then
+            log WARNING "跳过重复插入: 目标文件中已存在相同内容: ${arg2}"
+            return 0
+        fi
+
+        if sed -i "/${arg1}/i \\${arg2}" "$target_file"; then
+            log SUCCESS "插入成功: ${target_file/#$PROJECT_ROOT\//}"
+        else
+            log ERROR "插入失败: ${target_file/#$PROJECT_ROOT\//}"
+            return 1
+        fi
+        ;;
+
+    "append")
+        # 追加操作: 在文件末尾追加内容
+        if [ -z "$arg1" ]; then
+            log WARNING "追加操作需要内容参数"
+            return 1
+        fi
+
+        # 检查是否已存在相同内容
+        if grep -qF "$arg1" "$target_file"; then
+            log WARNING "跳过重复追加: 目标文件中已存在相同内容: ${arg1}"
+            return 0
+        fi
+
+        if echo -e "$arg1" >>"$target_file"; then
+            log SUCCESS "追加成功: ${target_file/#$PROJECT_ROOT\//}"
+        else
+            log ERROR "追加失败: ${target_file/#$PROJECT_ROOT\//}"
+            return 1
+        fi
+        ;;
+
+    "delete")
+        # 删除操作: 删除匹配的行
+        if [ -z "$arg1" ]; then
+            log WARNING "删除操作需要匹配字符串"
+            return 1
+        fi
+
+        if sed -i "/${arg1}/d" "$target_file"; then
+            log SUCCESS "删除成功: ${target_file/#$PROJECT_ROOT\//}"
+        else
+            log ERROR "删除失败: ${target_file/#$PROJECT_ROOT\//}"
+            return 1
+        fi
+        ;;
+
+    *)
+        log WARNING "未知操作类型: $action"
+        return 1
+        ;;
     esac
-    
+
     return 0
 }
 
 # 定制配置文件
 customize_config_files() {
-    local context="$1"  # 定制上下文: init(初始化) 或 build(编译)
-    local build_time="$2"  # 编译时间 (仅用于build上下文)
-    
+    local context="$1"    # 定制上下文: init(初始化) 或 build(编译)
+    local build_time="$2" # 编译时间 (仅用于build上下文)
+
     log INFO "开始${context}阶段配置文件定制"
-    
+
     # 检查定制配置文件是否存在
     validate_file "$CUSTOMIZE_CONFIG" || {
         log WARNING "定制配置文件不存在，使用默认设置"
-        
+
         # 根据上下文应用默认设置
         if [ "$context" == "init" ]; then
             customize_default_settings_init
         elif [ "$context" == "build" ]; then
             customize_default_settings_build "$build_time"
         fi
-        
+
         return 0
     }
-    
+
     # 读取定制配置文件
     local line_count=0
     while IFS= read -r line; do
         # 跳过注释行和空行
         [[ $line =~ ^# || -z $line ]] && continue
         ((line_count++))
-        
+
         # 替换规则中的变量
         line=$(echo "$line" | sed -e "s|\${AUTHOR}|$AUTHOR|g" \
-                                  -e "s|\${PROJECT_ROOT}|$PROJECT_ROOT|g" \
-                                  -e "s|\${SRC_DIR}|$SRC_DIR|g" \
-                                  -e "s|\${ZZZ_SETTINGS}|$ZZZ_SETTINGS|g")
-        
+            -e "s|\${PROJECT_ROOT}|$PROJECT_ROOT|g" \
+            -e "s|\${SRC_DIR}|$SRC_DIR|g" \
+            -e "s|\${ZZZ_SETTINGS}|$ZZZ_SETTINGS|g")
+
         # 解析配置行：上下文;操作类型;目标文件;参数1;参数2
-        IFS=';' read -r line_context action target_file arg1 arg2 <<< "$line"
-        
+        IFS=';' read -r line_context action target_file arg1 arg2 <<<"$line"
+
         # 检查上下文是否匹配
         if [ "$line_context" != "$context" ] && [ "$line_context" != "all" ]; then
             continue
         fi
-        
+
         # 仅在编译阶段替换参数2中的占位符
         if [ -n "$build_time" ]; then
             arg2=$(echo "$arg2" | sed "s/__BUILD_TIME__/$build_time/g")
         fi
-        
+
         # 应用定制规则
         apply_customization "$target_file" "$action" "$arg1" "$arg2"
-        
-    done < "$CUSTOMIZE_CONFIG"
-    
+
+    done <"$CUSTOMIZE_CONFIG"
+
     if [ $line_count -eq 0 ]; then
         log WARNING "没有找到适用于${context}上下文的定制规则"
-        
+
         # 如果没有找到规则，应用默认设置
         if [ "$context" == "init" ]; then
             customize_default_settings_init
@@ -469,22 +468,22 @@ customize_config_files() {
 # 初始化阶段默认设置定制
 customize_default_settings_init() {
     log INFO "应用初始化阶段默认设置"
-    
+
     # 1. 修改固件描述信息 (使用占位符)
     local target_desc="LEDE Build by ${AUTHOR} @ __BUILD_TIME__"
     apply_customization "$ZZZ_SETTINGS" "replace" "DISTRIB_DESCRIPTION='.*'" "DISTRIB_DESCRIPTION='${target_desc}'"
-    
+
     # 2. 添加网络和主机名配置
     local network_config="uci set network.lan.ipaddr='192.168.8.1'   # 默认 IP 地址"
     local hostname_config="uci set system.@system[0].hostname='M28C'"
-    
+
     # 添加网络配置（仅当不存在时添加）
     if ! grep -qF "$network_config" "$ZZZ_SETTINGS"; then
         apply_customization "$ZZZ_SETTINGS" "insert-after" "DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} @ __BUILD_TIME__'" "$network_config"
     else
         log WARNING "跳过重复网络配置: ${network_config}"
     fi
-    
+
     # 添加主机名配置（仅当不存在时添加）
     if ! grep -qF "$hostname_config" "$ZZZ_SETTINGS"; then
         apply_customization "$ZZZ_SETTINGS" "insert-after" "DISTRIB_DESCRIPTION='LEDE Build by ${AUTHOR} @ __BUILD_TIME__'" "$hostname_config"
@@ -497,10 +496,10 @@ customize_default_settings_init() {
 customize_default_settings_build() {
     local build_time="$1"
     log INFO "应用编译阶段默认设置"
-    
+
     # 更新固件描述信息 (替换为实际构建时间)
     local target_desc="LEDE Build by ${AUTHOR} @ ${build_time}"
-    
+
     # 使用更宽泛的正则表达式匹配，确保即使占位符已被替换也能匹配
     if sed -i "s|DISTRIB_DESCRIPTION='.*'|DISTRIB_DESCRIPTION='${target_desc}'|g" "$ZZZ_SETTINGS"; then
         log SUCCESS "构建时间更新成功: ${ZZZ_SETTINGS/#$PROJECT_ROOT\//}"
@@ -512,7 +511,7 @@ customize_default_settings_build() {
 # 初始化构建环境
 initialize_build_environment() {
     log INFO "开始初始化构建环境"
-    
+
     # 1. 备份关键文件
     backup_critical_files || {
         log ERROR "关键文件备份失败，初始化中止"
@@ -530,7 +529,6 @@ initialize_build_environment() {
 
     log SUCCESS "构建环境初始化完成"
 }
-
 
 # 下载远程软件包
 download_remote_packages() {
@@ -608,7 +606,7 @@ download_remote_packages() {
             log ERROR "下载失败: $name"
             exit 1
         ) &
-        pids+=($!)  # 保存后台进程ID
+        pids+=($!) # 保存后台进程ID
     done
 
     # 显示进度并等待完成
@@ -623,27 +621,28 @@ download_remote_packages() {
 
 # 更新已下载软件包
 update_downloaded_packages() {
-    local packages_to_update=("$@")  # 获取要更新的包名列表
+    local packages_to_update=("$@") # 获取要更新的包名列表
     log INFO "开始更新已下载软件包"
     local total=0 success=0
     local pids=()
+    local results=() # 存储子任务结果
 
     # 读取下载配置文件
     local config_lines=()
     while IFS= read -r line; do
         # 跳过注释行和空行
         [[ $line =~ ^# || -z $line ]] && continue
-        
+
         # 如果指定了要更新的包，检查当前行是否匹配
         if [ ${#packages_to_update[@]} -gt 0 ]; then
             local pkg_name=$(echo "$line" | awk '{print $2}')
             if ! printf '%s\n' "${packages_to_update[@]}" | grep -q "^$pkg_name$"; then
-                continue  # 跳过不匹配的包
+                continue # 跳过不匹配的包
             fi
         fi
-        
+
         config_lines+=("$line")
-    done < "$DL_CONFIG"
+    done <"$DL_CONFIG"
 
     total=${#config_lines[@]}
     if [ $total -eq 0 ]; then
@@ -654,63 +653,74 @@ update_downloaded_packages() {
         fi
         return 0
     fi
-    
+
     log INFO "找到 $total 个需要更新的软件包"
 
     # 并行处理每个软件包更新
     for line in "${config_lines[@]}"; do
         (
-            # 设置子shell的错误处理
+            # 设置子shell的错误处理和清理函数
+            cleanup() {
+                # 如果当前在目标目录中，弹出目录堆栈
+                if [[ "$(dirs)" != "$original_dir" ]]; then
+                    popd &>/dev/null || true
+                fi
+            }
+
+            # 保存原始目录
+            original_dir="$(dirs)"
+            trap cleanup EXIT
+
             set -e
-            
+
             # 解析配置字段
             type=$(echo "$line" | awk '{print $1}')
             name=$(echo "$line" | awk '{print $2}')
             repo_info=$(echo "$line" | awk '{print $3}')
             dest_path=$(echo "$line" | awk '{$1=$2=$3=""; print $0}' | sed -e 's/^[[:space:]]*//')
-            
+
             # 分割仓库URL和分支
             IFS=';' read -r repo branch <<<"$repo_info"
             branch="${branch:-master}" # 默认master分支
-            
+
             # 构建目标路径
             target_dir="${PROJECT_ROOT}/${dest_path}"
-            
+
             # 检查目录有效性
             if [ ! -d "$target_dir" ]; then
                 log WARNING "跳过未安装包: $name"
                 exit 0
             fi
-            
+
             if [ ! -d "$target_dir/.git" ]; then
                 log WARNING "非git仓库: ${target_dir/#$PROJECT_ROOT\//}"
                 exit 0
             fi
-            
+
             # 进入目录
             if ! pushd "$target_dir" >/dev/null; then
                 log ERROR "无法进入目录: ${target_dir/#$PROJECT_ROOT\//}"
                 exit 1
             fi
-            
+
             # 分支处理
             current_branch=$(git symbolic-ref --short HEAD 2>/dev/null)
             if [[ "$current_branch" != "$branch" ]]; then
-                log INFO "切换分支: $current_branch -> $branch"
+                log DEBUG "切换分支: $current_branch -> $branch"
                 if ! git checkout -q "$branch"; then
                     log ERROR "分支切换失败: $name → $branch"
                     exit 1
                 fi
             fi
-            
+
             # 显示当前提交信息
             local current_commit=$(git rev-parse --short HEAD)
-            log INFO "更新前版本: $name (${current_commit})"
-            
+            log DEBUG "更新前版本: $name (${current_commit})"
+
             # 带重试的更新
             local update_success=0
             for attempt in {1..3}; do
-                log INFO "更新尝试 (${attempt}/3): $name"
+                log DEBUG "更新尝试 (${attempt}/3): $name"
                 if git fetch --all --quiet && git reset --hard "origin/$branch" --quiet; then
                     # 显示更新后的提交信息
                     local new_commit=$(git rev-parse --short HEAD)
@@ -724,7 +734,7 @@ update_downloaded_packages() {
                 else
                     log WARNING "更新失败 (尝试: ${attempt}/3)"
                     sleep $((attempt * 2))
-                    
+
                     # 最后一次尝试强制清理
                     if [ $attempt -eq 3 ]; then
                         git reset --hard HEAD
@@ -738,10 +748,10 @@ update_downloaded_packages() {
                     fi
                 fi
             done
-            
+
             # 退出目录
             popd >/dev/null
-            
+
             # 根据更新结果退出
             if [ $update_success -eq 1 ]; then
                 exit 0
@@ -750,16 +760,16 @@ update_downloaded_packages() {
                 exit 1
             fi
         ) &
-        pids+=($!)  # 保存后台进程ID
+        pids+=($!) # 保存后台进程ID
     done
-    
+
     # 等待所有后台进程完成并计数
     for pid in "${pids[@]}"; do
         if wait "$pid"; then
             ((success++))
         fi
     done
-    
+
     log INFO "软件包更新完成 (成功: ${success}/${total})"
     [ "$success" -eq "$total" ] || return 1
 }
@@ -881,61 +891,61 @@ copy_build_artifacts() {
     log INFO "开始复制构建产物"
     local total_files=0 copied_files=0
     local config_found=0
-    
+
     # 检查配置文件是否存在
     validate_file "$COPY_CONFIG" || {
         log ERROR "复制配置文件不存在: ${COPY_CONFIG/#$PROJECT_ROOT\//}"
         return 1
     }
-    
+
     # 获取当前日期(年-月-日 格式)
     local current_date=$(date +%Y-%m-%d)
-    
+
     # 读取配置文件并处理
     while IFS= read -r line; do
         # 跳过注释行和空行
         [[ $line =~ ^# || -z $line ]] && continue
         ((config_found++))
-        
+
         # 分割源路径和目标基础路径
-        read -r src_pattern dest_base <<< "$line"
-        
+        read -r src_pattern dest_base <<<"$line"
+
         # 验证路径
         if [[ -z $src_pattern || -z $dest_base ]]; then
             log WARNING "跳过无效配置行: $line"
             continue
         fi
-        
+
         log DEBUG "处理配置: 源路径=$src_pattern, 目标基础路径=$dest_base"
-        
+
         # 构建完整目标路径
         local target_dir="${dest_base}/${current_date}"
-        
+
         # 创建目标目录
         mkdir -p "$target_dir" || {
             log ERROR "创建目录失败: $target_dir"
             continue
         }
-        
+
         # 构建相对于SRC_DIR的完整路径
         local full_src_path="${SRC_DIR}/${src_pattern}"
-        
+
         # 添加详细调试日志
         log DEBUG "搜索路径: $full_src_path"
-        
+
         # 扩展源路径中的通配符
         local expanded_files=()
         # 使用nullglob选项，当没有匹配文件时不返回原始模式
         shopt -s nullglob
         expanded_files=($full_src_path)
         shopt -u nullglob
-        
+
         # 检查是否有匹配的文件
         if [ ${#expanded_files[@]} -eq 0 ]; then
             log WARNING "没有找到匹配的文件: $src_pattern"
             continue
         fi
-        
+
         # 复制匹配的文件
         local found_files=0
         for file in "${expanded_files[@]}"; do
@@ -952,25 +962,25 @@ copy_build_artifacts() {
                 ((total_files++))
             fi
         done
-        
+
         # 输出结果
         if [ $found_files -gt 0 ]; then
             log INFO "已复制 $found_files 个文件到: ${target_dir/#$PROJECT_ROOT\//}"
         fi
-        
-    done < "$COPY_CONFIG"
-    
+
+    done <"$COPY_CONFIG"
+
     # 检查是否有有效的配置行
     if [ $config_found -eq 0 ]; then
         log WARNING "配置文件中没有有效的配置行"
     fi
-    
+
     if [ $copied_files -gt 0 ]; then
         log SUCCESS "构建产物复制完成 (总计: $copied_files/$total_files)"
     else
         log WARNING "没有复制任何文件"
     fi
-    
+
     [ $copied_files -gt 0 ] || return 1
 }
 
@@ -978,16 +988,20 @@ copy_build_artifacts() {
 full_build_process() {
     log INFO "启动完整构建流程"
 
-    download_remote_packages || {
-        log ERROR "下载软件包失败，构建中止"
-        return 1
+    update_downloaded_packages || {
+        log ERROR "更新软件包失败，尝试下载"
+        download_remote_packages || {
+            log ERROR "下载软件包失败，构建终止"
+            return 1
+        }
+
     }
 
     install_custom_packages || {
         log ERROR "安装软件包失败，构建中止"
         return 1
     }
-
+    customize_config_files "init"
     update_and_install_feeds || {
         log ERROR "更新feeds失败，构建中止"
         return 1
@@ -997,7 +1011,7 @@ full_build_process() {
         log ERROR "固件编译失败"
         return 1
     }
-    
+
     copy_build_artifacts || {
         log WARNING "构建产物复制失败，但构建已完成"
     }
@@ -1073,7 +1087,6 @@ show_help() {
     echo -e "${CYAN}=============================================${NC}"
 }
 
-
 # 主函数
 main() {
     # 设置错误陷阱
@@ -1089,9 +1102,9 @@ main() {
     backup) backup_critical_files ;;
     install) install_custom_packages ;;
     download) download_remote_packages ;;
-    update) 
-        shift  # 移除命令名，保留参数
-        update_downloaded_packages "$@" 
+    update)
+        shift # 移除命令名，保留参数
+        update_downloaded_packages "$@"
         ;;
     feeds) update_and_install_feeds ;;
     build) compile_firmware ;;
