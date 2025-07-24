@@ -19,6 +19,7 @@ DL_CONFIG="${SCRIPT_DIR}/download.config"
 BACKUP_DIR="${RES_DIR}/backups"
 COPY_CONFIG="${SCRIPT_DIR}/copy.config"
 CUSTOMIZE_CONFIG="${SCRIPT_DIR}/customize.config"
+DEFCONFIG_DIR="${RES_DIR}/defconfig"  # 保存defconfig的目录
 
 # 固定文件路径
 FEEDS_CONF="${SRC_DIR}/feeds.conf.default"
