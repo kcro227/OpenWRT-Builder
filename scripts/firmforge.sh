@@ -5,7 +5,7 @@
 # 版本: 3.8.1
 # 作者: KCrO
 # 更新: 2025-07-09
-# 优化: 增强日志系统和进度显示
+# 优化: 增强日志系统和进度显示，支持配置中使用全局常量
 # =============================================
 
 # 全局常量
@@ -351,7 +351,7 @@ clean_build_environment() {
 
 # 应用定制规则
 apply_customization() {
-    local target_file=$(eval echo "$1")
+    local target_file="$1"
     local action="$2"
     local arg1="$3"
     local arg2="$4"
@@ -444,6 +444,32 @@ apply_customization() {
     return 0
 }
 
+# 替换变量函数 (支持全局常量)
+replace_vars() {
+    local input="$1"
+    local build_time="$2"
+    
+    # 替换时间占位符
+    input=${input//__BUILD_TIME__/$build_time}
+    
+    # 替换全局常量
+    input=${input//\$\{AUTHOR\}/$AUTHOR}
+    input=${input//\$\{SCRIPT_DIR\}/$SCRIPT_DIR}
+    input=${input//\$\{PROJECT_ROOT\}/$PROJECT_ROOT}
+    input=${input//\$\{RES_DIR\}/$RES_DIR}
+    input=${input//\$\{SRC_DIR\}/$SRC_DIR}
+    input=${input//\$\{PKG_CONFIG\}/$PKG_CONFIG}
+    input=${input//\$\{DL_CONFIG\}/$DL_CONFIG}
+    input=${input//\$\{BACKUP_DIR\}/$BACKUP_DIR}
+    input=${input//\$\{COPY_CONFIG\}/$COPY_CONFIG}
+    input=${input//\$\{CUSTOMIZE_CONFIG\}/$CUSTOMIZE_CONFIG}
+    input=${input//\$\{DEFCONFIG_DIR\}/$DEFCONFIG_DIR}
+    input=${input//\$\{FEEDS_CONF\}/$FEEDS_CONF}
+    input=${input//\$\{ZZZ_SETTINGS\}/$ZZZ_SETTINGS}
+    
+    echo "$input"
+}
+
 # 定制配置文件
 customize_config_files() {
     local context="$1"
@@ -467,17 +493,62 @@ customize_config_files() {
         [[ $line =~ ^# || -z $line ]] && continue
         ((line_count++))
         
-        line=$(echo "$line" | sed -e "s|\${AUTHOR}|$AUTHOR|g" \
-                                  -e "s|\${PROJECT_ROOT}|$PROJECT_ROOT|g" \
-                                  -e "s|\${SRC_DIR}|$SRC_DIR|g" \
-                                  -e "s|\${ZZZ_SETTINGS}|$ZZZ_SETTINGS|g")
+        # 使用数组处理字段
+        IFS=';' read -r -a fields <<< "$line"
+        local num_fields=${#fields[@]}
+        if [ $num_fields -lt 4 ]; then
+            log WARNING "配置行字段不足: $line" "配置定制"
+            continue
+        fi
         
-        IFS=';' read -r line_context action target_file arg1 arg2 <<< "$line"
+        # 替换所有字段中的变量
+        for i in "${!fields[@]}"; do
+            fields[$i]=$(replace_vars "${fields[$i]}" "$build_time")
+        done
+        
+        local line_context="${fields[0]}"
+        local action="${fields[1]}"
+        
         [ "$line_context" != "$context" ] && [ "$line_context" != "all" ] && continue
         
-        [ -n "$build_time" ] && arg2=$(echo "$arg2" | sed "s/__BUILD_TIME__/$build_time/g")
+        # 处理exec操作 (执行Shell命令)
+        if [ "$action" == "exec" ]; then
+            if [ $num_fields -lt 4 ]; then
+                log WARNING "exec操作需要至少4个字段: $line" "配置定制"
+                continue
+            fi
+            
+            local cmd_desc="${fields[2]}"
+            local actual_cmd="${fields[3]}"
+            
+            log INFO "执行命令: $cmd_desc" "配置定制"
+            log DEBUG "命令: $actual_cmd" "配置定制"
+            
+            # 执行命令并捕获输出
+            output=$(eval "$actual_cmd" 2>&1)
+            result=$?
+            
+            if [ $result -eq 0 ]; then
+                log SUCCESS "命令执行成功: $cmd_desc" "配置定制"
+                ((applied_rules++))
+            else
+                log ERROR "命令执行失败: $cmd_desc (退出码: $result)" "配置定制"
+                log DEBUG "输出: $output" "配置定制"
+            fi
         
-        apply_customization "$target_file" "$action" "$arg1" "$arg2" && ((applied_rules++))
+        # 处理其他操作类型
+        else
+            if [ $num_fields -lt 5 ]; then
+                log WARNING "非exec操作需要至少5个字段: $line" "配置定制"
+                continue
+            fi
+            
+            local target_file="${fields[2]}"
+            local arg1="${fields[3]}"
+            local arg2="${fields[4]}"
+            
+            apply_customization "$target_file" "$action" "$arg1" "$arg2" && ((applied_rules++))
+        fi
         
     done < "$CUSTOMIZE_CONFIG"
     
