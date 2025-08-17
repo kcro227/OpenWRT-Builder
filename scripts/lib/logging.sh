@@ -3,6 +3,7 @@
 # 全局变量声明
 declare -gi MAIN_LINES=0
 declare -g LOG_FILE PROGRESS_PIPE PROGRESS_MANAGER_PID
+declare -g USE_TPUT=1  # 添加tput使用标志
 
 # 日志级别 (DEBUG, INFO, WARNING, ERROR)
 LOG_LEVEL=${LOG_LEVEL:-"INFO"}
@@ -26,8 +27,14 @@ init_logging() {
     # 保存原始输出描述符
     exec 3>&1 4>&2
     
-    # 启动进度条管理器
-    start_progress_manager
+    # 检查是否支持tput
+    if ! command -v tput &> /dev/null || [ ! -t 1 ]; then
+        USE_TPUT=0
+        log "WARNING" "终端不支持tput命令或非交互式终端，禁用进度条功能"
+    else
+        # 启动进度条管理器
+        start_progress_manager
+    fi
     
     # 重定向标准输出和错误输出
     if [[ $1 != "config" ]]; then
@@ -68,7 +75,7 @@ start_progress_manager() {
                 tput cup $((MAIN_LINES + 1)) 0
                 tput el
                 
-                # 解析进度数据
+                # 解析进度数据 (current;total;message)
                 IFS=';' read -r current total message <<< "$progress_data"
                 
                 # 显示系统状态
@@ -79,15 +86,20 @@ start_progress_manager() {
                 tput cup $((MAIN_LINES + 1)) 0
                 show_progress_bar "$current" "$total" "$message"
                 
-                # 关键修复：进度条更新后恢复光标到日志区域
-                tput cup $((MAIN_LINES - 1)) 0
+                # 恢复光标到日志区域
+                safe_tput "cup $((MAIN_LINES - 1)) 0"
             fi
         done
     ) &
     PROGRESS_MANAGER_PID=$!
 }
 
-# 增强日志函数（修复输出问题）
+# 安全tput函数
+safe_tput() {
+    [ $USE_TPUT -eq 1 ] && tput $1 2>/dev/null || true
+}
+
+# 增强日志函数（修复光标位置问题）
 log() {
     local level=$1
     local message=$2
@@ -123,15 +135,20 @@ log() {
     # 构建日志行
     local log_line="[${timestamp}] ${BOLD}${color}${level_padded}${NC} ${icon} ${caller_info}${context}${message}"
     
-    # 在主输出区域显示日志
-    tput cup $((MAIN_LINES - 1)) 0 2>/dev/null
-    echo -e "$log_line"
-    
-    # 向下滚动一行（模拟自然滚动）
-    tput il1 2>/dev/null
-    
-    # 关键修复：日志输出后恢复光标到日志区域底部
-    tput cup $((MAIN_LINES - 1)) 0 2>/dev/null
+    if [ $USE_TPUT -eq 1 ]; then
+        # 在主输出区域显示日志
+        safe_tput "cup $((MAIN_LINES - 1)) 0"
+        echo -e "$log_line"
+        
+        # 向下滚动一行（模拟自然滚动）
+        safe_tput "il1"
+        
+        # 恢复光标到日志区域底部
+        safe_tput "cup $((MAIN_LINES - 1)) 0"
+    else
+        # 非交互式终端直接输出
+        echo -e "$log_line"
+    fi
 }
 
 # 进度条显示函数
@@ -169,8 +186,8 @@ show_progress_bar() {
     # 在进度条区域显示
     echo -ne "${progress_info}"
     
-    # 关键修复：进度条显示后恢复光标到日志区域
-    tput cup $((MAIN_LINES - 1)) 0 2>/dev/null
+    # 恢复光标到日志区域
+    safe_tput "cup $((MAIN_LINES - 1)) 0"
 }
 
 # 更新进度条显示
@@ -180,16 +197,16 @@ update_progress() {
     local msg=$3
     
     # 通过命名管道发送进度数据
-    echo "${current};${total};${msg}" > "$PROGRESS_PIPE"
+    [ $USE_TPUT -eq 1 ] && echo "${current};${total};${msg}" > "$PROGRESS_PIPE"
 }
 
 # 清理日志系统（保留日志显示）
 cleanup_logging() {
     # 恢复终端滚动区域
-    tput csr 0 $(tput lines) 2>/dev/null
+    [ $USE_TPUT -eq 1 ] && safe_tput "csr 0 $(tput lines)"
     
     # 结束进度条管理器及其子进程
-    if [ -n "$PROGRESS_MANAGER_PID" ]; then
+    if [ -n "$PROGRESS_MANAGER_PID" ] && [ $USE_TPUT -eq 1 ]; then
         kill -TERM "$PROGRESS_MANAGER_PID" 2>/dev/null
         wait "$PROGRESS_MANAGER_PID" 2>/dev/null
     fi
@@ -200,13 +217,15 @@ cleanup_logging() {
     # 恢复标准输出
     exec 1>&3 2>&4
     
-    # 清除进度条区域
-    tput cup $MAIN_LINES 0 2>/dev/null
-    tput el 2>/dev/null
-    tput cup $((MAIN_LINES + 1)) 0 2>/dev/null
-    tput el 2>/dev/null
-    
-    # 将光标移动到屏幕底部
-    tput cup $(tput lines) 0 2>/dev/null
-    echo -ne "\n"  # 确保新提示符在下一行
+    if [ $USE_TPUT -eq 1 ]; then
+        # 清除进度条区域
+        safe_tput "cup $MAIN_LINES 0"
+        safe_tput "el"
+        safe_tput "cup $((MAIN_LINES + 1)) 0"
+        safe_tput "el"
+        
+        # 将光标移动到屏幕底部
+        safe_tput "cup $(tput lines) 0"
+        echo -ne "\n"  # 确保新提示符在下一行
+    fi
 }
