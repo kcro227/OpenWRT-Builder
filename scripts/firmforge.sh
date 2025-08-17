@@ -1012,9 +1012,11 @@ run_interactive_configuration() {
     return $result
 }
 
-# 复制构建产物
+# 复制构建产物（增强版）
 copy_build_artifacts() {
+    local version_tag="$1"
     log INFO "开始复制构建产物" "构建产物"
+    log INFO "版本标识: ${version_tag:-"默认版本"}" "构建产物"
     local total_files=0 copied_files=0 config_found=0
     local start_time=$(date +%s)
     
@@ -1045,7 +1047,14 @@ copy_build_artifacts() {
             continue
         }
         
-        local target_dir="${dest_base}/${current_date}"
+        # 添加版本标识目录层
+        local target_dir
+        if [ -n "$version_tag" ]; then
+            target_dir="${dest_base}/${current_date}/${version_tag}"
+        else
+            target_dir="${dest_base}/${current_date}"
+        fi
+        
         mkdir -p "$target_dir" || {
             log ERROR "创建目录失败: $target_dir" "构建产物"
             continue
@@ -1187,8 +1196,11 @@ main() {
     build) compile_firmware ;;
     clean-build) clean_compilation_files ;;
     config) run_interactive_configuration ;;
-    copy) copy_build_artifacts ;;
-    full-build) full_build_process ;;
+    copy) 
+    shift
+    copy_build_artifacts "$1" 
+    ;;
+    full-build) full_build_process;;
     help | *) show_help ;;
     esac
     
