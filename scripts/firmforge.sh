@@ -15,8 +15,9 @@ source "${SCRIPT_DIR}/lib/build.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
 source "${SCRIPT_DIR}/lib/artifacts.sh"
 
-# 设置错误处理
-trap 'trap_error ${LINENO} "$BASH_COMMAND"' ERR
+# 设置错误处理和清理
+trap 'cleanup_logging; exit' EXIT
+trap 'trap_error ${LINENO} "$BASH_COMMAND"; cleanup_logging; exit 1' ERR
 
 # 主函数
 main() {
@@ -40,8 +41,6 @@ main() {
     full-build) full_build_process;;
     help | *) show_help ;;
     esac
-    
-    exit 0
 }
 
 # 启动脚本

@@ -16,25 +16,36 @@ copy_build_artifacts() {
     
     local current_date=$(date +%Y-%m-%d)
     
-    # 显示进度条
-    local current=0
-    (
-        while [ $copied_files -lt $total_files ]; do
-            sleep 0.5
-            show_progress_bar $copied_files $total_files "复制构建产物"
-        done
-    ) &
-    local progress_pid=$!
-    
+    # 获取总文件数
     while IFS= read -r line; do
         [[ $line =~ ^# || -z $line ]] && continue
         ((config_found++))
         
         read -r src_pattern dest_base <<< "$line"
-        [ -z "$src_pattern" ] || [ -z "$dest_base" ] && {
-            log WARNING "跳过无效配置行: $line" "构建产物"
-            continue
-        }
+        [ -z "$src_pattern" ] || [ -z "$dest_base" ] && continue
+        
+        local full_src_path="${SRC_DIR}/${src_pattern}"
+        shopt -s nullglob
+        local expanded_files=($full_src_path)
+        shopt -u nullglob
+        
+        total_files=$((total_files + ${#expanded_files[@]}))
+    done < "$COPY_CONFIG"
+    
+    [ $total_files -eq 0 ] && {
+        log WARNING "没有找到需要复制的文件" "构建产物"
+        return 0
+    }
+    
+    # 开始复制
+    update_progress 0 $total_files "准备复制"
+    
+    local current_file=0
+    while IFS= read -r line; do
+        [[ $line =~ ^# || -z $line ]] && continue
+        
+        read -r src_pattern dest_base <<< "$line"
+        [ -z "$src_pattern" ] || [ -z "$dest_base" ] && continue
         
         # 添加版本标识目录层
         local target_dir
@@ -54,36 +65,27 @@ copy_build_artifacts() {
         local expanded_files=($full_src_path)
         shopt -u nullglob
         
-        [ ${#expanded_files[@]} -eq 0 ] && {
-            log WARNING "没有找到匹配的文件: $src_pattern" "构建产物"
-            continue
-        }
-        
-        total_files=$((total_files + ${#expanded_files[@]}))
-        
-        local found_files=0
         for file in "${expanded_files[@]}"; do
             [ -e "$file" ] || continue
             local relative_path="${file/#$SRC_DIR\//}"
-            cp -v "$file" "$target_dir/" && {
+            
+            if cp -v "$file" "$target_dir/"; then
                 log SUCCESS "复制: $relative_path → ${target_dir/#$PROJECT_ROOT\//}" "构建产物"
-                ((found_files++))
                 ((copied_files++))
-                ((current++))
-            }
+            else
+                log ERROR "复制失败: $relative_path" "构建产物"
+            fi
+            
+            ((current_file++))
+            update_progress $current_file $total_files "复制中 ($current_file/$total_files)"
         done
-        
-        [ $found_files -gt 0 ] && log INFO "已复制 $found_files 个文件到: ${target_dir/#$PROJECT_ROOT\//}" "构建产物"
     done < "$COPY_CONFIG"
-    
-    # 结束进度条进程
-    kill $progress_pid >/dev/null 2>&1
-    wait $progress_pid 2>/dev/null
     
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
     
-    [ $config_found -eq 0 ] && log WARNING "配置文件中没有有效的配置行" "构建产物"
+    # 最终进度更新
+    update_progress $total_files $total_files "复制完成 (成功: $copied_files/$total_files)"
     
     if [ $copied_files -gt 0 ]; then
         log SUCCESS "构建产物复制完成 (总计: $copied_files/$total_files, 耗时: ${duration}秒)" "构建产物"

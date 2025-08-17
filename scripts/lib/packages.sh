@@ -3,7 +3,7 @@
 
 # 安装自定义软件包
 install_custom_packages() {
-    log INFO "开始安装自定义软件包"
+    log INFO "开始安装自定义软件包" "软件包安装"
     local total=0 success=0
     local pids=()
     
@@ -20,19 +20,7 @@ install_custom_packages() {
     }
     
     log INFO "发现 ${total} 个需要安装的软件包" "软件包安装"
-    
-    # 显示进度条
-    (
-        local last_reported=0
-        while [ $success -lt $total ]; do
-            sleep 0.5
-            if [ $success -gt $last_reported ] || [ $success -eq $total ]; then
-                show_progress_bar $success $total "安装软件包"
-                last_reported=$success
-            fi
-        done
-    ) &
-    local progress_pid=$!
+    update_progress 0 $total "准备安装软件包"
     
     for line in "${config_lines[@]}"; do
         (
@@ -79,25 +67,46 @@ install_custom_packages() {
         pids+=($!)
     done
     
+    # 监控进度
     local completed=0
+    while [ $completed -lt $total ]; do
+        # 更新进度
+        update_progress $completed $total "安装中 (已完成 $completed/$total)"
+        
+        # 检查是否有子进程完成
+        local new_completed=0
+        for pid in "${pids[@]}"; do
+            if ! kill -0 $pid 2>/dev/null; then
+                ((new_completed++))
+            fi
+        done
+        
+        # 如果有新的任务完成
+        if [ $new_completed -gt $completed ]; then
+            completed=$new_completed
+        fi
+        
+        sleep 0.5
+    done
+    
+    # 等待所有进程完成
+    local failed=0
     for pid in "${pids[@]}"; do
         if wait $pid; then
             ((success++))
         else
+            ((failed++))
             log WARNING "软件包安装任务失败" "软件包安装"
         fi
-        ((completed++))
-        show_progress_bar $completed $total "安装软件包"
     done
     
-    # 结束进度条进程
-    kill $progress_pid >/dev/null 2>&1
-    wait $progress_pid 2>/dev/null
+    # 最终进度更新
+    update_progress $total $total "安装完成 (成功: $success/$total)"
     
     if [ $success -eq $total ]; then
         log SUCCESS "软件包安装完成 (${success}/${total} 全部成功)" "软件包安装"
     else
-        log ERROR "软件包安装完成 (成功: ${success}/${total}, 失败: $((total-success)))" "软件包安装"
+        log ERROR "软件包安装完成 (成功: ${success}/${total}, 失败: $failed)" "软件包安装"
         return 1
     fi
 }
@@ -165,7 +174,6 @@ download_remote_packages() {
     log INFO "开始下载远程软件包" "软件包下载"
     local start_time=$(date +%s)
     local total=0 success=0
-    local pids=()
     
     local config_lines=()
     while IFS= read -r line; do
@@ -180,44 +188,25 @@ download_remote_packages() {
     }
     
     log INFO "发现 ${total} 个需要下载的软件包" "软件包下载"
-    
-    # 显示进度条
-    (
-        local last_reported=0
-        while [ $success -lt $total ]; do
-            sleep 0.5
-            if [ $success -gt $last_reported ] || [ $success -eq $total ]; then
-                show_progress_bar $success $total "下载软件包"
-                last_reported=$success
-            fi
-        done
-    ) &
-    local progress_pid=$!
-    
-    for line in "${config_lines[@]}"; do
-        (
-            download_single_package "$line" || exit 1
-        ) &
-        pids+=($!)
-    done
+    update_progress 0 $total "准备下载"
     
     local completed=0
-    for pid in "${pids[@]}"; do
-        if wait $pid; then
+    for line in "${config_lines[@]}"; do
+        if download_single_package "$line"; then
             ((success++))
         else
-            log WARNING "软件包下载任务失败" "软件包下载"
+            log WARNING "软件包下载失败: $line" "软件包下载"
         fi
+        
         ((completed++))
-        show_progress_bar $completed $total "下载软件包"
+        update_progress $completed $total "下载中 (已完成 $completed/$total)"
     done
-    
-    # 结束进度条进程
-    kill $progress_pid >/dev/null 2>&1
-    wait $progress_pid 2>/dev/null
     
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
+    
+    # 最终进度更新
+    update_progress $total $total "下载完成 (成功: $success/$total)"
     
     if [ $success -eq $total ]; then
         log SUCCESS "软件包下载完成 (${success}/${total} 全部成功, 耗时: ${duration}秒)" "软件包下载"
@@ -321,40 +310,29 @@ update_downloaded_packages() {
     for line in "${config_lines[@]}"; do
         package_names+=("$(echo "$line" | awk '{print $2}')")
     done
+    
     log INFO "发现 ${total} 个需要更新的软件包: ${package_names[*]}" "软件包更新"
+    update_progress 0 $total "准备更新"
     
     local index=0
     for line in "${config_lines[@]}"; do
-        # 获取包名用于状态显示
         local pkg_name=$(echo "$line" | awk '{print $2}')
         
-        # 更新包并捕获状态信息
-        local status_msg=""
         if update_single_package "$line"; then
             ((success++))
-            # 获取当前提交ID
-            local repo_info=$(echo "$line" | awk '{print $3}')
-            local dest_path=$(echo "$line" | awk '{$1=$2=$3=""; print $0}' | sed -e 's/^[[:space:]]*//')
-            local target_dir="${PROJECT_ROOT}/${dest_path}"
-            
-            if [ -d "${target_dir}/.git" ]; then
-                pushd "${target_dir}" >/dev/null
-                local commit_hash=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-                popd >/dev/null
-                status_msg="(软件包更新) 已是最新: ${pkg_name} (${commit_hash})"
-            else
-                status_msg="(软件包更新) 已是最新: ${pkg_name}"
-            fi
         else
-            status_msg="(软件包更新) 更新失败: ${pkg_name}"
+            log WARNING "软件包更新失败: $pkg_name" "软件包更新"
         fi
         
         ((index++))
-        show_progress_bar $index $total "$status_msg"
+        update_progress $index $total "更新中 (已完成 $index/$total)"
     done
     
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
+    
+    # 最终进度更新
+    update_progress $total $total "更新完成 (成功: $success/$total)"
     
     if [ $success -eq $total ]; then
         log SUCCESS "软件包更新完成 (${success}/${total} 全部成功, 耗时: ${duration}秒)" "软件包更新"

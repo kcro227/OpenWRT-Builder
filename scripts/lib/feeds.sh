@@ -8,34 +8,28 @@ update_and_install_feeds() {
     
     pushd "$SRC_DIR" >/dev/null || return 1
     
-    local progress_pid=$!
+    # 更新进度
+    update_progress 0 3 "更新feeds"
     
     log DEBUG "执行: ./scripts/feeds update -a" "feeds管理"
     ./scripts/feeds update -a || {
-        kill $progress_pid >/dev/null 2>&1
         popd >/dev/null
         log ERROR "更新feeds失败" "feeds管理"
         return 1
     }
     
-    kill $progress_pid >/dev/null 2>&1
-    wait $progress_pid 2>/dev/null
-    echo -ne "\r\033[K"
+    update_progress 1 3 "更新feeds完成"
     
     log INFO "开始安装feeds包" "feeds管理"
-    
-    progress_pid=$!
+    update_progress 2 3 "安装feeds"
     
     log DEBUG "执行: ./scripts/feeds install -a" "feeds管理"
     ./scripts/feeds install -a || {
-        kill $progress_pid >/dev/null 2>&1
         log ERROR "安装feeds失败" "feeds管理"
         return 1
     }
     
-    kill $progress_pid >/dev/null 2>&1
-    wait $progress_pid 2>/dev/null
-    echo -ne "\r\033[K"
+    update_progress 3 3 "安装feeds完成"
     
     popd >/dev/null
     log SUCCESS "feeds安装完成" "feeds管理"
