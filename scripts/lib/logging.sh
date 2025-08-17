@@ -1,5 +1,9 @@
 #!/bin/bash
 # 日志系统模块
+# 全局变量声明
+declare -gi MAIN_LINES=0
+declare -g LOG_FILE PROGRESS_PIPE PROGRESS_MANAGER_PID
+
 # 日志级别 (DEBUG, INFO, WARNING, ERROR)
 LOG_LEVEL=${LOG_LEVEL:-"INFO"}
 
@@ -23,58 +27,67 @@ init_logging() {
     exec 3>&1 4>&2
     
     # 启动进度条管理器
-    start_progress_manager &
-    PROGRESS_MANAGER_PID=$!
+    start_progress_manager
     
     # 重定向标准输出和错误输出
     if [[ $1 != "config" ]]; then
         exec > >(tee -a "$LOG_FILE") 2>&1
     fi
+    
+    # 设置信号捕获确保退出时清理
+    trap 'cleanup_logging' EXIT INT TERM
 }
 
 # 启动进度条管理器
 start_progress_manager() {
-    # 获取终端尺寸
-    local term_lines=$(tput lines)
-    local term_cols=$(tput cols)
-    
-    # 计算主输出区域高度（保留底部2行给进度条）
-    MAIN_LINES=$((term_lines - 2))
-    
-    # 设置主输出区域
-    tput csr 0 $((MAIN_LINES - 1))
-    tput cup 0 0
-    
-    # 设置进度条区域（底部2行）
-    tput cup $MAIN_LINES 0
-    echo -ne "${BOLD}${GREEN}系统状态:${NC} 初始化进度条系统..."
-    tput cup $((MAIN_LINES + 1)) 0
-    echo -ne "${BOLD}${YELLOW}进度:${NC} [等待任务开始]"
-    
-    # 监听进度条更新
-    while true; do
-        if read -r progress_data < "$PROGRESS_PIPE"; then
-            # 清空进度区域
-            tput cup $MAIN_LINES 0
-            tput el
-            tput cup $((MAIN_LINES + 1)) 0
-            tput el
-            
-            # 解析进度数据 (current;total;message)
-            IFS=';' read -r current total message <<< "$progress_data"
-            
-            # 显示系统状态
-            tput cup $MAIN_LINES 0
-            echo -ne "${BOLD}${GREEN}系统状态:${NC} ${message}"
-            
-            # 显示进度条
-            tput cup $((MAIN_LINES + 1)) 0
-            show_progress_bar "$current" "$total" "$message"
-        fi
-    done
+    # 在子进程中运行进度管理器
+    (
+        # 获取终端尺寸
+        local term_lines=$(tput lines)
+        local term_cols=$(tput cols)
+        
+        # 计算主输出区域高度（保留底部2行给进度条）
+        MAIN_LINES=$((term_lines - 2))
+        
+        # 设置主输出区域（允许向上滚动）
+        tput csr 0 $((MAIN_LINES - 1))
+        tput cup $((MAIN_LINES - 1)) 0  # 初始光标位置在底部
+        
+        # 设置进度条区域（底部2行）
+        tput cup $MAIN_LINES 0
+        echo -ne "${BOLD}${GREEN}系统状态:${NC} 初始化进度条系统..."
+        tput cup $((MAIN_LINES + 1)) 0
+        echo -ne "${BOLD}${YELLOW}进度:${NC} [等待任务开始]"
+        
+        # 监听进度条更新
+        while true; do
+            if read -r progress_data < "$PROGRESS_PIPE"; then
+                # 清空进度区域
+                tput cup $MAIN_LINES 0
+                tput el
+                tput cup $((MAIN_LINES + 1)) 0
+                tput el
+                
+                # 解析进度数据
+                IFS=';' read -r current total message <<< "$progress_data"
+                
+                # 显示系统状态
+                tput cup $MAIN_LINES 0
+                echo -ne "${BOLD}${GREEN}系统状态:${NC} ${message}"
+                
+                # 显示进度条
+                tput cup $((MAIN_LINES + 1)) 0
+                show_progress_bar "$current" "$total" "$message"
+                
+                # 关键修复：进度条更新后恢复光标到日志区域
+                tput cup $((MAIN_LINES - 1)) 0
+            fi
+        done
+    ) &
+    PROGRESS_MANAGER_PID=$!
 }
 
-# 增强日志函数
+# 增强日志函数（修复输出问题）
 log() {
     local level=$1
     local message=$2
@@ -107,15 +120,18 @@ log() {
     local context=""
     [[ -n "$3" ]] && context="(${3}) "
     
+    # 构建日志行
+    local log_line="[${timestamp}] ${BOLD}${color}${level_padded}${NC} ${icon} ${caller_info}${context}${message}"
+    
     # 在主输出区域显示日志
-    tput cup $MAIN_LINES 0  # 先移动光标到主区域底部
-    tput il1  # 插入新行使内容向上滚动
+    tput cup $((MAIN_LINES - 1)) 0 2>/dev/null
+    echo -e "$log_line"
     
-    # 输出带颜色的日志消息
-    echo -e "[${timestamp}] ${BOLD}${color}${level_padded}${NC} ${icon} ${caller_info}${context}${message}"
+    # 向下滚动一行（模拟自然滚动）
+    tput il1 2>/dev/null
     
-    # 恢复光标到主区域底部
-    tput cup $MAIN_LINES 0
+    # 关键修复：日志输出后恢复光标到日志区域底部
+    tput cup $((MAIN_LINES - 1)) 0 2>/dev/null
 }
 
 # 进度条显示函数
@@ -138,12 +154,12 @@ show_progress_bar() {
     # 构建进度条字符串
     local bar="${GREEN}"
     for ((i = 0; i < completed_chars; i++)); do
-        bar+="▓"
+        bar+="="
     done
     
     bar+="${YELLOW}"
     for ((i = 0; i < remaining_chars; i++)); do
-        bar+="░"
+        bar+="-"
     done
     bar+="${NC}"
 
@@ -152,6 +168,9 @@ show_progress_bar() {
     
     # 在进度条区域显示
     echo -ne "${progress_info}"
+    
+    # 关键修复：进度条显示后恢复光标到日志区域
+    tput cup $((MAIN_LINES - 1)) 0 2>/dev/null
 }
 
 # 更新进度条显示
@@ -164,17 +183,30 @@ update_progress() {
     echo "${current};${total};${msg}" > "$PROGRESS_PIPE"
 }
 
-# 清理日志系统
+# 清理日志系统（保留日志显示）
 cleanup_logging() {
-    # 恢复终端设置
-    tput csr 0 $(tput lines)
+    # 恢复终端滚动区域
+    tput csr 0 $(tput lines) 2>/dev/null
     
-    # 结束进度条管理器
-    [ -n "$PROGRESS_MANAGER_PID" ] && kill $PROGRESS_MANAGER_PID >/dev/null 2>&1
+    # 结束进度条管理器及其子进程
+    if [ -n "$PROGRESS_MANAGER_PID" ]; then
+        kill -TERM "$PROGRESS_MANAGER_PID" 2>/dev/null
+        wait "$PROGRESS_MANAGER_PID" 2>/dev/null
+    fi
     
     # 清理命名管道
-    [ -p "$PROGRESS_PIPE" ] && rm -f "$PROGRESS_PIPE"
+    [ -p "$PROGRESS_PIPE" ] && rm -f "$PROGRESS_PIPE" 2>/dev/null
     
     # 恢复标准输出
     exec 1>&3 2>&4
+    
+    # 清除进度条区域
+    tput cup $MAIN_LINES 0 2>/dev/null
+    tput el 2>/dev/null
+    tput cup $((MAIN_LINES + 1)) 0 2>/dev/null
+    tput el 2>/dev/null
+    
+    # 将光标移动到屏幕底部
+    tput cup $(tput lines) 0 2>/dev/null
+    echo -ne "\n"  # 确保新提示符在下一行
 }
