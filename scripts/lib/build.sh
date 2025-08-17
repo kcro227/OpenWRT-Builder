@@ -36,13 +36,36 @@ compile_firmware() {
     
     pushd "$SRC_DIR" >/dev/null || return 1
     
-    # 显示编译进度
+    # 创建编译进度监控
     (
         local start_ts=$(date +%s)
+        local spin_chars=('|' '/' '-' '\')
+        local spin_index=0
+        local last_line=""
+        
         while true; do
+            # 更新旋转符号
+            spin_index=$(( (spin_index + 1) % ${#spin_chars[@]} ))
+            local spin_char=${spin_chars[$spin_index]}
+            
+            # 获取已用时间
             local current_ts=$(date +%s)
             local elapsed=$((current_ts - start_ts))
             local elapsed_str=$(printf "%02d:%02d:%02d" $((elapsed/3600)) $(((elapsed%3600)/60)) $((elapsed%60)))
+            
+            # 尝试获取最新的编译输出行
+            local current_line=$(tail -n 1 "$LOG_FILE" 2>/dev/null | tr -d '\n\r')
+            if [[ -n "$current_line" && "$current_line" != "$last_line" ]]; then
+                last_line="$current_line"
+                # 截取过长的行
+                if [ ${#current_line} -gt 70 ]; then
+                    current_line="${current_line:0:67}..."
+                fi
+            fi
+            
+            # 更新进度显示
+            update_progress 0 0 "${spin_char} 编译中... 时间: ${elapsed_str} ${current_line}"
+            sleep 0.5
         done
     ) &
     local progress_pid=$!
@@ -95,12 +118,22 @@ full_build_process() {
     log INFO "启动完整构建流程" "完整构建"
     local start_time=$(date +%s)
     
+    # 显示整体进度
+    update_progress 0 4 "开始完整构建流程..."
+    
     update_downloaded_packages || log WARNING "更新软件包失败，继续构建" "完整构建"
+    update_progress 1 4 "步骤 1/4: 软件包更新完成"
+    
     install_custom_packages || log WARNING "安装软件包失败，继续构建" "完整构建"
+    update_progress 2 4 "步骤 2/4: 软件包安装完成"
+    
     customize_config_files "init"
     update_and_install_feeds || log WARNING "更新feeds失败，继续构建" "完整构建"
+    update_progress 3 4 "步骤 3/4: Feeds配置完成"
+    
     compile_firmware || return 1
     copy_build_artifacts || log WARNING "构建产物复制失败，但构建已完成" "完整构建"
+    update_progress 4 4 "步骤 4/4: 固件编译完成"
     
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
