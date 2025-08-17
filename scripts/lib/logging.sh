@@ -181,7 +181,7 @@ show_progress_bar() {
     bar+="${NC}"
 
     # 构建进度信息
-    local progress_info="[${bar}] ${percent}% (${current}/${total}) ${msg}"
+    local progress_info="[${bar}] ${percent}% (${current}/${total})"
     
     # 在进度条区域显示
     echo -ne "${progress_info}"
