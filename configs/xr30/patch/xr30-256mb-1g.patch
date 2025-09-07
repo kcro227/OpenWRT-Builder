@@ -1,0 +1,29 @@
+diff --git a/target/linux/mediatek/image/filogic.mk b/target/linux/mediatek/image/filogic.mk
+index ff63157e8a..58b5a2d487 100644
+--- a/target/linux/mediatek/image/filogic.mk
++++ b/target/linux/mediatek/image/filogic.mk
+@@ -692,6 +692,24 @@ define Device/cmcc_xr30-nand
+ endef
+ TARGET_DEVICES += cmcc_xr30-nand
+ 
++define Device/cmcc_xr30-nand-256mb
++  DEVICE_VENDOR := CMCC
++  DEVICE_MODEL := XR30 NAND
++  DEVICE_VARIANT := (256MB VERSION)
++  DEVICE_DTS := mt7981b-cmcc-xr30-nand-256mb
++  DEVICE_DTS_DIR := ../dts
++  DEVICE_PACKAGES := kmod-mt7981-firmware mt7981-wo-firmware kmod-usb3
++  UBINIZE_OPTS := -E 5
++  BLOCKSIZE := 128k
++  PAGESIZE := 2048
++  IMAGE_SIZE := 235520k
++  KERNEL_IN_UBI := 1
++  IMAGES += factory.bin
++  IMAGE/factory.bin := append-ubi | check-size $$$$(IMAGE_SIZE)
++  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
++endef
++TARGET_DEVICES += cmcc_xr30-nand-256mb
++
+ define Device/comfast_cf-e393ax
+   DEVICE_VENDOR := COMFAST
+   DEVICE_MODEL := CF-E393AX
