@@ -1,0 +1,47 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+STOP=10
+
+NAME=modemwebui
+PIDFILE=/tmp/run/$NAME.pid
+
+replace_and_start() {
+    LAN_ADDR=$(uci get network.lan.ipaddr)
+    CONFIG_FILE=$1
+    SERVER_PY=$2
+
+    cp -f ${CONFIG_FILE}.bak $CONFIG_FILE
+    sed -i "s/\b192\.168\.1\.1\b/$LAN_ADDR/g" $CONFIG_FILE
+    start-stop-daemon -S -b -m -p $PIDFILE -x /usr/bin/python3 -- $SERVER_PY
+    sleep 1
+    rm -rf /tmp/luci-*
+    exit 0
+}
+
+start() {
+    retry_times=5
+    while [ "$retry_times" -gt 0 ]; do
+        lsusb_output=$(lsusb)
+        if echo "$lsusb_output" | grep -q "MT5700M-CN"; then
+            replace_and_start \
+                /www/webui/webui5700/web/config.json \
+                /www/webui/webui5700/server.py
+        elif echo "$lsusb_output" | grep -q "0e8d:7127" || 
+            echo "$lsusb_output" | grep -q "FM350-GL" ||
+            echo "$lsusb_output" | grep -q "0e8d:223c" ||
+            echo "$lsusb_output" | grep -q "RM520"; then
+            replace_and_start \
+                /www/webui/webui000/web/config.json \
+                /www/webui/webui000/server.py
+        else
+            sleep 30
+            retry_times=$((retry_times-1))
+        fi
+    done
+}
+
+stop() {
+    [ -f $PIDFILE ] && start-stop-daemon -K -p $PIDFILE
+    rm -f $PIDFILE
+} 

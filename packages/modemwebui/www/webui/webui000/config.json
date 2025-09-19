@@ -1,0 +1,13 @@
+{
+  "WEBSOCKET": {
+    "HOST": "0.0.0.0",
+    "PORT": 8765
+  },
+  "HTTP": {
+    "PORT": 8001
+  },
+  "SERIAL": {
+    "PORT": "auto",
+    "MODE": "tom_modem"
+  }
+}

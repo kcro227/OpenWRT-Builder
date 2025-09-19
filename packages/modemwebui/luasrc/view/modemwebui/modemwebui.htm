@@ -1,0 +1,9 @@
+<%+header%>
+<div class="cbi-map">
+        <h2 name="content">WEB界面</h2>
+        <iframe id="modemwebui" style="width: 100%; min-height: 1200px; border: none; border-radius: 3px;"></iframe>
+</div>
+<script type="text/javascript">
+        document.getElementById("modemwebui").src = window.location.protocol + "//" + window.location.hostname + ":8001";
+</script>
+<%+footer%>
