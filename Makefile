@@ -71,6 +71,18 @@ script:
 	@$(MAKE) -C $(SCRIPT_DIR)/copy
 	@echo "工具脚本编译完成"
 
+script-clean:
+	@echo "清理工具脚本..."
+	@$(MAKE) -C $(SCRIPT_DIR)/utils clean
+	@$(MAKE) -C $(SCRIPT_DIR)/feeds clean
+	@$(MAKE) -C $(SCRIPT_DIR)/customize clean
+	@$(MAKE) -C $(SCRIPT_DIR)/init-target clean
+	@$(MAKE) -C $(SCRIPT_DIR)/pm-install clean
+	@$(MAKE) -C $(SCRIPT_DIR)/menu clean
+	@$(MAKE) -C $(SCRIPT_DIR)/backup clean
+	@$(MAKE) -C $(SCRIPT_DIR)/copy clean
+	@echo "工具脚本清理完成"
+	
 # 初始化目标：下载源码、安装feeds、应用自定义配置和安装软件包
 init: check-target
 	@echo "备份文件"

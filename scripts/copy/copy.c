@@ -117,11 +117,82 @@ int create_directory(const char* path) {
     return 0;
 }
 
+// 递归删除目录
+int remove_directory(const char* path) {
+    DIR *dir;
+    struct dirent *entry;
+    char full_path[MAX_PATH_LENGTH];
+    
+    if (!(dir = opendir(path))) {
+        return -1;
+    }
+    
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+        
+        if (is_directory(full_path)) {
+            if (remove_directory(full_path) != 0) {
+                closedir(dir);
+                return -1;
+            }
+        } else {
+            if (remove(full_path) != 0) {
+                closedir(dir);
+                return -1;
+            }
+        }
+    }
+    
+    closedir(dir);
+    
+    if (rmdir(path) != 0) {
+        return -1;
+    }
+    
+    return 0;
+}
+
+// 强制删除文件或目录
+int force_remove(const char* path) {
+    if (!file_exists(path)) {
+        return 0; // 不存在，视为成功
+    }
+    
+    if (is_directory(path)) {
+        return remove_directory(path);
+    } else {
+        return remove(path);
+    }
+}
+
 // 复制文件
 int copy_file(const char* src, const char* dst) {
     FILE *src_fp, *dst_fp;
     char buffer[8192];
     size_t bytes;
+    
+    // 确保目标目录存在
+    char* last_slash = strrchr(dst, '/');
+    if (last_slash) {
+        *last_slash = 0;
+        if (create_directory(dst) != 0) {
+            log_message(LOG_ERROR, "创建目标目录失败", "文件复制");
+            return -1;
+        }
+        *last_slash = '/';
+    }
+    
+    // 如果目标文件已存在，先删除
+    if (file_exists(dst)) {
+        if (force_remove(dst) != 0) {
+            log_message(LOG_ERROR, "删除已存在文件失败", "文件复制");
+            return -1;
+        }
+    }
     
     src_fp = fopen(src, "rb");
     if (!src_fp) {
@@ -156,6 +227,15 @@ int copy_directory(const char* src, const char* dst) {
     if (!(dir = opendir(src))) {
         log_message(LOG_ERROR, strerror(errno), "目录复制");
         return -1;
+    }
+    
+    // 如果目标目录已存在，先删除
+    if (file_exists(dst)) {
+        if (force_remove(dst) != 0) {
+            closedir(dir);
+            log_message(LOG_ERROR, "删除已存在目录失败", "目录复制");
+            return -1;
+        }
     }
     
     if (create_directory(dst) != 0) {

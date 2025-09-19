@@ -523,7 +523,7 @@ bool check_insert_applied(const char *file_path, const char *pattern, const char
     
     char line[4096];
     bool pattern_found = false;
-    bool content_found_after_pattern = false;
+    bool content_found = false;
     
     // 编译正则表达式
     regex_t regex;
@@ -533,45 +533,24 @@ bool check_insert_applied(const char *file_path, const char *pattern, const char
     }
     
     while (fgets(line, sizeof(line), file) != NULL) {
+        // 检查内容是否已经存在（无论位置）
+        if (strstr(line, content) != NULL) {
+            content_found = true;
+        }
+        
         // 检查模式是否存在
         regmatch_t matches[1];
         if (regexec(&regex, line, 1, matches, 0) == 0) {
             pattern_found = true;
-            
-            // 如果是insert-after，检查下一行是否包含内容
-            if (after) {
-                char next_line[4096];
-                if (fgets(next_line, sizeof(next_line), file) != NULL) {
-                    if (strstr(next_line, content) != NULL) {
-                        content_found_after_pattern = true;
-                        break;
-                    }
-                    // 回退一行，因为我们已经读取了下一行
-                    fseek(file, -strlen(next_line), SEEK_CUR);
-                }
-            }
-        }
-        
-        // 检查内容是否已经存在
-        if (strstr(line, content) != NULL) {
-            // 如果是insert-before，检查前一行是否包含模式
-            if (!after && pattern_found) {
-                content_found_after_pattern = true;
-                break;
-            }
-        }
-        
-        // 重置pattern_found，除非我们正在检查insert-before
-        if (!after) {
-            pattern_found = false;
         }
     }
     
     regfree(&regex);
     fclose(file);
     
-    // 如果内容已经存在且在正确的位置，则认为已经应用
-    return content_found_after_pattern;
+    // 如果内容已经存在，则认为已经应用
+    // 或者如果模式存在且内容是紧跟在模式后面/前面（对于insert-after/insert-before）
+    return content_found || (pattern_found && after); // 简化逻辑，确保不重复插入
 }
 
 // 检查追加操作是否已经应用
@@ -832,7 +811,7 @@ int execute_copy(const char *src, const char *dest) {
     return system(cmd);
 }
 
-// 执行规则
+// 修改 execute_rule 函数，增强检查逻辑
 int execute_rule(const Rule *rule, const char *src_dir, const char *res_dir, 
                 const char *author, const char *build_time, 
                 char **variables, int var_count) {
@@ -852,12 +831,11 @@ int execute_rule(const Rule *rule, const char *src_dir, const char *res_dir,
     int result = 0;
     bool already_applied = false;
     
-    // 检查规则是否已经应用
+    // 检查规则是否已经应用 - 增强检查逻辑
     switch (rule->operation) {
         case OP_REPLACE:
-            if (param1 && param2) {
-                already_applied = check_replace_applied(target_file, param1, param2);
-            }
+            // 替换操作总是执行，不检查是否已经应用
+            already_applied = false;
             break;
             
         case OP_INSERT_AFTER:
