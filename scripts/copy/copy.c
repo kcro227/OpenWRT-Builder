@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <ctype.h>
 #include <getopt.h>
+#include <sys/wait.h>
 
 #define MAX_LINE_LENGTH 1024
 #define MAX_PATH_LENGTH 4096
@@ -89,188 +90,23 @@ int is_directory(const char* path) {
 
 // 创建目录（包括父目录）
 int create_directory(const char* path) {
-    char tmp[MAX_PATH_LENGTH];
-    char *p = NULL;
-    size_t len;
-    
-    snprintf(tmp, sizeof(tmp), "%s", path);
-    len = strlen(tmp);
-    
-    if (tmp[len - 1] == '/') {
-        tmp[len - 1] = 0;
-    }
-    
-    for (p = tmp + 1; *p; p++) {
-        if (*p == '/') {
-            *p = 0;
-            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
-                return -1;
-            }
-            *p = '/';
-        }
-    }
-    
-    if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
-        return -1;
-    }
-    
-    return 0;
+    char cmd[MAX_PATH_LENGTH + 10];
+    snprintf(cmd, sizeof(cmd), "mkdir -p \"%s\"", path);
+    return system(cmd);
 }
 
-// 递归删除目录
-int remove_directory(const char* path) {
-    DIR *dir;
-    struct dirent *entry;
-    char full_path[MAX_PATH_LENGTH];
-    
-    if (!(dir = opendir(path))) {
-        return -1;
-    }
-    
-    while ((entry = readdir(dir)) != NULL) {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-            continue;
-        }
-        
-        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
-        
-        if (is_directory(full_path)) {
-            if (remove_directory(full_path) != 0) {
-                closedir(dir);
-                return -1;
-            }
-        } else {
-            if (remove(full_path) != 0) {
-                closedir(dir);
-                return -1;
-            }
-        }
-    }
-    
-    closedir(dir);
-    
-    if (rmdir(path) != 0) {
-        return -1;
-    }
-    
-    return 0;
+// 使用cp命令复制文件或目录
+int copy_with_cp(const char* src, const char* dst) {
+    char cmd[MAX_PATH_LENGTH * 2 + 10];
+    snprintf(cmd, sizeof(cmd), "cp -a \"%s\" \"%s\"", src, dst);
+    return system(cmd);
 }
 
-// 强制删除文件或目录
-int force_remove(const char* path) {
-    if (!file_exists(path)) {
-        return 0; // 不存在，视为成功
-    }
-    
-    if (is_directory(path)) {
-        return remove_directory(path);
-    } else {
-        return remove(path);
-    }
-}
-
-// 复制文件
-int copy_file(const char* src, const char* dst) {
-    FILE *src_fp, *dst_fp;
-    char buffer[8192];
-    size_t bytes;
-    
-    // 确保目标目录存在
-    char* last_slash = strrchr(dst, '/');
-    if (last_slash) {
-        *last_slash = 0;
-        if (create_directory(dst) != 0) {
-            log_message(LOG_ERROR, "创建目标目录失败", "文件复制");
-            return -1;
-        }
-        *last_slash = '/';
-    }
-    
-    // 如果目标文件已存在，先删除
-    if (file_exists(dst)) {
-        if (force_remove(dst) != 0) {
-            log_message(LOG_ERROR, "删除已存在文件失败", "文件复制");
-            return -1;
-        }
-    }
-    
-    src_fp = fopen(src, "rb");
-    if (!src_fp) {
-        log_message(LOG_ERROR, strerror(errno), "文件复制");
-        return -1;
-    }
-    
-    dst_fp = fopen(dst, "wb");
-    if (!dst_fp) {
-        fclose(src_fp);
-        log_message(LOG_ERROR, strerror(errno), "文件复制");
-        return -1;
-    }
-    
-    while ((bytes = fread(buffer, 1, sizeof(buffer), src_fp)) > 0) {
-        fwrite(buffer, 1, bytes, dst_fp);
-    }
-    
-    fclose(src_fp);
-    fclose(dst_fp);
-    
-    return 0;
-}
-
-// 递归复制目录
-int copy_directory(const char* src, const char* dst) {
-    DIR *dir;
-    struct dirent *entry;
-    char src_path[MAX_PATH_LENGTH], dst_path[MAX_PATH_LENGTH];
-    struct stat st;
-    
-    if (!(dir = opendir(src))) {
-        log_message(LOG_ERROR, strerror(errno), "目录复制");
-        return -1;
-    }
-    
-    // 如果目标目录已存在，先删除
-    if (file_exists(dst)) {
-        if (force_remove(dst) != 0) {
-            closedir(dir);
-            log_message(LOG_ERROR, "删除已存在目录失败", "目录复制");
-            return -1;
-        }
-    }
-    
-    if (create_directory(dst) != 0) {
-        closedir(dir);
-        log_message(LOG_ERROR, strerror(errno), "目录复制");
-        return -1;
-    }
-    
-    while ((entry = readdir(dir)) != NULL) {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-            continue;
-        }
-        
-        snprintf(src_path, sizeof(src_path), "%s/%s", src, entry->d_name);
-        snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, entry->d_name);
-        
-        if (stat(src_path, &st) != 0) {
-            continue;
-        }
-        
-        if (S_ISDIR(st.st_mode)) {
-            if (copy_directory(src_path, dst_path) != 0) {
-                closedir(dir);
-                return -1;
-            }
-        } else {
-            if (copy_file(src_path, dst_path) != 0) {
-                closedir(dir);
-                return -1;
-            }
-        }
-    }
-    
-    closedir(dir);
-    return 0;
+// 使用rm命令删除文件或目录
+int remove_with_rm(const char* path) {
+    char cmd[MAX_PATH_LENGTH + 10];
+    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", path);
+    return system(cmd);
 }
 
 // 变量替换函数
@@ -471,33 +307,27 @@ int execute_copy_rule(const CopyRule* rule, const char* marker, const char* date
                 *last_slash = '/';
             }
             
+            // 检查目标是否已存在
+            if (file_exists(final_target_path)) {
+                log_message(LOG_WARNING, "目标已存在，正在删除...", "复制操作");
+                if (remove_with_rm(final_target_path) != 0) {
+                    log_message(LOG_ERROR, "删除失败", "复制操作");
+                    continue;
+                }
+            }
+            
             // 复制文件或目录
-            if (is_directory(source_path)) {
-                if (copy_directory(source_path, final_target_path) == 0) {
-                    char success_msg[MAX_PATH_LENGTH + 50];
-                    snprintf(success_msg, sizeof(success_msg), "复制目录成功: %s -> %s", 
-                            source_path, final_target_path);
-                    log_message(LOG_SUCCESS, success_msg, "复制操作");
-                    files_copied++;
-                } else {
-                    char error_msg[MAX_PATH_LENGTH + 50];
-                    snprintf(error_msg, sizeof(error_msg), "复制目录失败: %s -> %s", 
-                            source_path, final_target_path);
-                    log_message(LOG_ERROR, error_msg, "复制操作");
-                }
+            if (copy_with_cp(source_path, final_target_path) == 0) {
+                char success_msg[MAX_PATH_LENGTH + 50];
+                snprintf(success_msg, sizeof(success_msg), "复制成功: %s -> %s", 
+                        source_path, final_target_path);
+                log_message(LOG_SUCCESS, success_msg, "复制操作");
+                files_copied++;
             } else {
-                if (copy_file(source_path, final_target_path) == 0) {
-                    char success_msg[MAX_PATH_LENGTH + 50];
-                    snprintf(success_msg, sizeof(success_msg), "复制文件成功: %s -> %s", 
-                            source_path, final_target_path);
-                    log_message(LOG_SUCCESS, success_msg, "复制操作");
-                    files_copied++;
-                } else {
-                    char error_msg[MAX_PATH_LENGTH + 50];
-                    snprintf(error_msg, sizeof(error_msg), "复制文件失败: %s -> %s", 
-                            source_path, final_target_path);
-                    log_message(LOG_ERROR, error_msg, "复制操作");
-                }
+                char error_msg[MAX_PATH_LENGTH + 50];
+                snprintf(error_msg, sizeof(error_msg), "复制失败: %s -> %s", 
+                        source_path, final_target_path);
+                log_message(LOG_ERROR, error_msg, "复制操作");
             }
             
             total_files++;
