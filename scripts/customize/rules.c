@@ -516,44 +516,33 @@ bool check_replace_applied(const char *file_path, const char *search, const char
     return found;
 }
 
-// 检查插入操作是否已经应用
+// 检查插入操作是否已经应用 - 使用简单的字符串匹配
 bool check_insert_applied(const char *file_path, const char *pattern, const char *content, bool after) {
     FILE *file = fopen(file_path, "r");
     if (file == NULL) return false;
     
     char line[4096];
-    bool pattern_found = false;
     bool content_found = false;
     
-    // 编译正则表达式
-    regex_t regex;
-    if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
-        fclose(file);
-        return false;
-    }
-    
+    // 简单的字符串匹配：检查整个文件中是否已经包含要插入的内容
     while (fgets(line, sizeof(line), file) != NULL) {
-        // 检查内容是否已经存在（无论位置）
-        if (strstr(line, content) != NULL) {
+        // 清理行内容进行比较
+        char *clean_line = clean_string(line);
+        if (clean_line && strstr(clean_line, content) != NULL) {
             content_found = true;
+            free(clean_line);
+            break;
         }
-        
-        // 检查模式是否存在
-        regmatch_t matches[1];
-        if (regexec(&regex, line, 1, matches, 0) == 0) {
-            pattern_found = true;
-        }
+        if (clean_line) free(clean_line);
     }
     
-    regfree(&regex);
     fclose(file);
     
-    // 如果内容已经存在，则认为已经应用
-    // 或者如果模式存在且内容是紧跟在模式后面/前面（对于insert-after/insert-before）
-    return content_found || (pattern_found && after); // 简化逻辑，确保不重复插入
+    // 如果内容已经存在，就跳过插入
+    return content_found;
 }
 
-// 检查追加操作是否已经应用
+// 检查追加操作是否已经应用 - 使用简单的字符串匹配
 bool check_append_applied(const char *file_path, const char *content) {
     FILE *file = fopen(file_path, "r");
     if (file == NULL) return false;
@@ -561,11 +550,15 @@ bool check_append_applied(const char *file_path, const char *content) {
     char line[4096];
     bool found = false;
     
-    // 检查文件末尾是否已经是该内容
+    // 检查整个文件中是否已经包含要追加的内容
     while (fgets(line, sizeof(line), file) != NULL) {
-        if (strstr(line, content) != NULL) {
+        char *clean_line = clean_string(line);
+        if (clean_line && strstr(clean_line, content) != NULL) {
             found = true;
+            free(clean_line);
+            break;
         }
+        if (clean_line) free(clean_line);
     }
     
     fclose(file);
@@ -616,8 +609,14 @@ bool check_copy_applied(const char *src, const char *dest) {
     return dest_stat.st_mtime >= src_stat.st_mtime;
 }
 
-// 执行插入操作（支持正则表达式）
+// 执行插入操作（支持正则表达式）- 包含重复检查
 int execute_insert(const char *file_path, const char *pattern, const char *content, bool after) {
+    // 首先检查内容是否已经存在
+    if (check_insert_applied(file_path, pattern, content, after)) {
+        printf("跳过重复插入: 目标文件中已存在相同内容\n");
+        return 0;
+    }
+    
     // 构建临时文件路径
     char tmp_path[PATH_MAX];
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", file_path);
@@ -708,8 +707,14 @@ int execute_insert(const char *file_path, const char *pattern, const char *conte
     }
 }
 
-// 执行追加操作
+// 执行追加操作 - 包含重复检查
 int execute_append(const char *file_path, const char *content) {
+    // 首先检查内容是否已经存在
+    if (check_append_applied(file_path, content)) {
+        printf("跳过重复追加: 目标文件中已存在相同内容\n");
+        return 0;
+    }
+    
     // 清理内容字符串
     char *clean_content = clean_string(content);
     if (clean_content == NULL) {
@@ -725,7 +730,7 @@ int execute_append(const char *file_path, const char *content) {
     }
     
     // 直接写入清理后的内容
-    fprintf(file, "%s", clean_content);
+    fprintf(file, "%s\n", clean_content);
     fclose(file);
     
     free(clean_content);
@@ -811,7 +816,7 @@ int execute_copy(const char *src, const char *dest) {
     return system(cmd);
 }
 
-// 修改 execute_rule 函数，增强检查逻辑
+// 执行规则
 int execute_rule(const Rule *rule, const char *src_dir, const char *res_dir, 
                 const char *author, const char *build_time, 
                 char **variables, int var_count) {
@@ -831,7 +836,7 @@ int execute_rule(const Rule *rule, const char *src_dir, const char *res_dir,
     int result = 0;
     bool already_applied = false;
     
-    // 检查规则是否已经应用 - 增强检查逻辑
+    // 检查规则是否已经应用
     switch (rule->operation) {
         case OP_REPLACE:
             // 替换操作总是执行，不检查是否已经应用
