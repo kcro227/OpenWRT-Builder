@@ -97,11 +97,60 @@ int list_packages(const char *model, const char *author) {
     
     for (int i = 0; i < package_count; i++) {
         char dst_path[PATH_MAX];
-        snprintf(dst_path, sizeof(dst_path), "srcs/%s/%s", model, packages[i]);
+        snprintf(dst_path, sizeof(dst_path), "srcs/%s/package/%s/%s", model, author, basename(packages[i]));
         
         printf("%-*s %-*s\n", 
                name_width, packages[i], 
                path_width, dst_path);
+    }
+    
+    return 0;
+}
+
+// 使用系统命令复制目录或文件
+int copy_with_cp(const char *src, const char *dst) {
+    char cmd[PATH_MAX * 3];
+    
+    // 确保目标目录存在
+    char dst_dir[PATH_MAX];
+    strncpy(dst_dir, dst, sizeof(dst_dir));
+    char *parent_dir = dirname(dst_dir);
+    
+    char mkdir_cmd[PATH_MAX * 2];
+    snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p \"%s\"", parent_dir);
+    if (system(mkdir_cmd) != 0) {
+        log_error("创建目录失败: %s", parent_dir);
+        return -1;
+    }
+    
+    // 如果目标已存在，先删除
+    if (access(dst, F_OK) == 0) {
+        char rm_cmd[PATH_MAX * 2];
+        snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf \"%s\"", dst);
+        if (system(rm_cmd) != 0) {
+            log_error("删除失败: %s", dst);
+            return -1;
+        }
+    }
+    
+    // 使用cp -a命令复制
+    snprintf(cmd, sizeof(cmd), "cp -a \"%s\" \"%s\"", src, dst);
+    if (system(cmd) != 0) {
+        log_error("复制失败: %s -> %s", src, dst);
+        return -1;
+    }
+    
+    return 0;
+}
+
+// 使用系统命令删除目录或文件
+int remove_with_rm(const char *path) {
+    char cmd[PATH_MAX * 2];
+    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", path);
+    
+    if (system(cmd) != 0) {
+        log_error("删除失败: %s", path);
+        return -1;
     }
     
     return 0;
@@ -129,18 +178,6 @@ int install_packages(const char *model, const char *author) {
         return 0;
     }
     
-    // 创建目标目录
-    char target_dir[PATH_MAX];
-    snprintf(target_dir, sizeof(target_dir), "srcs/%s/package", model);
-    
-    if (!dir_exists(target_dir)) {
-        log_info("创建目标目录: %s", target_dir);
-        if (create_dir(target_dir) != 0) {
-            log_error("创建目录失败: %s", target_dir);
-            return -1;
-        }
-    }
-    
     int success_count = 0;
     int fail_count = 0;
     
@@ -148,46 +185,24 @@ int install_packages(const char *model, const char *author) {
         char src_path[PATH_MAX];
         char dst_path[PATH_MAX];
         
-        // 源路径不包含作者名，目标路径包含作者名
+        // 源路径
         snprintf(src_path, sizeof(src_path), "packages/%s", packages[i]);
-        snprintf(dst_path, sizeof(dst_path), "%s/%s/%s", target_dir, author, packages[i]);
+        // 目标路径
+        snprintf(dst_path, sizeof(dst_path), "srcs/%s/package/%s/%s", model, author, basename(packages[i]));
         
-        // 获取目标目录的父目录
-        char dst_parent[PATH_MAX];
-        strncpy(dst_parent, dst_path, sizeof(dst_parent));
-        char *parent_dir = dirname(dst_parent);
-        
-        // 创建目标父目录
-        if (!dir_exists(parent_dir)) {
-            if (create_dir(parent_dir) != 0) {
-                log_error("创建目录失败: %s", parent_dir);
-                fail_count++;
-                continue;
-            }
+        if (!file_exists(src_path) && !dir_exists(src_path)) {
+            log_error("软件包不存在: %s", src_path);
+            fail_count++;
+            continue;
         }
         
-        if (dir_exists(src_path)) {
-            // 复制目录
-            log_info("复制目录: %s -> %s", src_path, dst_path);
-            if (copy_dir(src_path, dst_path) == 0) {
-                log_success("成功复制目录: %s", packages[i]);
-                success_count++;
-            } else {
-                log_error("复制目录失败: %s", packages[i]);
-                fail_count++;
-            }
-        } else if (file_exists(src_path)) {
-            // 复制文件
-            log_info("复制文件: %s -> %s", src_path, dst_path);
-            if (copy_file(src_path, dst_path) == 0) {
-                log_success("成功复制文件: %s", packages[i]);
-                success_count++;
-            } else {
-                log_error("复制文件失败: %s", packages[i]);
-                fail_count++;
-            }
+        log_info("安装软件包: %s -> %s", packages[i], dst_path);
+        
+        if (copy_with_cp(src_path, dst_path) == 0) {
+            log_success("成功安装: %s", packages[i]);
+            success_count++;
         } else {
-            log_error("软件包不存在: %s", src_path);
+            log_error("安装失败: %s", packages[i]);
             fail_count++;
         }
     }
@@ -228,11 +243,11 @@ int clean_packages(const char *model, const char *author) {
     
     for (int i = 0; i < package_count; i++) {
         char dst_path[PATH_MAX];
-        snprintf(dst_path, sizeof(dst_path), "srcs/%s/%s/%s", model, author, packages[i]);
+        snprintf(dst_path, sizeof(dst_path), "srcs/%s/package/%s/%s", model, author, basename(packages[i]));
         
         if (file_exists(dst_path) || dir_exists(dst_path)) {
             log_info("删除: %s", dst_path);
-            if (remove_file_or_dir(dst_path) == 0) {
+            if (remove_with_rm(dst_path) == 0) {
                 log_success("成功删除: %s", packages[i]);
                 success_count++;
             } else {
@@ -246,7 +261,7 @@ int clean_packages(const char *model, const char *author) {
     
     // 检查目标目录是否为空，如果为空则删除
     char target_dir[PATH_MAX];
-    snprintf(target_dir, sizeof(target_dir), "srcs/%s/%s", model, author);
+    snprintf(target_dir, sizeof(target_dir), "srcs/%s/package/%s", model, author);
     
     if (dir_exists(target_dir)) {
         DIR *dir = opendir(target_dir);
@@ -264,7 +279,7 @@ int clean_packages(const char *model, const char *author) {
             
             if (file_count == 0) {
                 log_info("目录为空，删除: %s", target_dir);
-                remove_file_or_dir(target_dir);
+                remove_with_rm(target_dir);
             }
         }
     }
@@ -289,7 +304,7 @@ int clean_packages(const char *model, const char *author) {
             
             if (file_count == 0) {
                 log_info("型号目录为空，删除: %s", model_dir);
-                remove_file_or_dir(model_dir);
+                remove_with_rm(model_dir);
             }
         }
     }

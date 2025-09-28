@@ -1,7 +1,7 @@
 # 编译器设置
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE
-LDFLAGS = 
+CFLAGS = -Wall -Wextra -std=c99 -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE -I../utils
+LDFLAGS = -L../utils -lutils
 TARGET = copy
 SRCDIR = .
 OBJDIR = .
