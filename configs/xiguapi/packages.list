@@ -10,9 +10,10 @@ openclash
 # luci-app-wechatpush 
 # luci-wrtbwmon 
 # wrtbwmon 
-fancontrol 
+# fancontrol
+modemfan 
 fm350webui 
-modemwebui
+# modemwebui
 ## Istore ==========================
 istore/luci-app-store 
 istore/luci-app-quickstart 
@@ -26,5 +27,6 @@ istore/luci-lib-xterm
 # nas/network/services/quickstart 
 # nas_luci/luci/luci-app-quickstart 
 # DbusSmsForwardCPlus 
-libcron
-daed
+# libcron
+# daed
+
