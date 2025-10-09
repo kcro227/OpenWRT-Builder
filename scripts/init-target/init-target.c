@@ -92,6 +92,143 @@ int read_source_config(const char *model, char *repo_url, char *branch) {
     return 0;
 }
 
+// 克隆源码仓库（带重试机制）
+int clone_repository(const char *repo_url, const char *branch, const char *target_dir) {
+    char cmd[1024];
+    int result = -1;
+    
+    // 构建克隆命令
+    if (strlen(branch) > 0) {
+        snprintf(cmd, sizeof(cmd), "git clone -b %s --single-branch --depth 1 %s \"%s\"", 
+                 branch, repo_url, target_dir);
+    } else {
+        snprintf(cmd, sizeof(cmd), "git clone --single-branch --depth 1 %s \"%s\"", 
+                 repo_url, target_dir);
+    }
+    
+    // 最多重试3次
+    for (int attempt = 1; attempt <= 3; attempt++) {
+        log_info("下载尝试 (%d/3): %s", attempt, basename((char*)target_dir));
+        log_info("执行命令: %s", cmd);
+        
+        result = system(cmd);
+        
+        if (result == 0) {
+            log_success("下载成功: %s", basename((char*)target_dir));
+            return 0;
+        }
+        
+        log_warning("下载失败 (尝试: %d/3)", attempt);
+        
+        // 删除可能部分下载的目录
+        if (dir_exists(target_dir)) {
+            remove_file_or_dir(target_dir);
+        }
+        
+        // 指数退避等待
+        sleep(attempt * 2);
+        
+        // 最后一次尝试时，如果不指定分支失败，尝试默认分支
+        if (attempt == 3 && strlen(branch) > 0) {
+            log_info("尝试默认分支");
+            snprintf(cmd, sizeof(cmd), "git clone --single-branch --depth 1 %s \"%s\"", 
+                     repo_url, target_dir);
+            result = system(cmd);
+            if (result == 0) {
+                log_success("下载成功（默认分支）: %s", basename((char*)target_dir));
+                return 0;
+            }
+        }
+    }
+    
+    log_error("下载失败: %s", basename((char*)target_dir));
+    return -1;
+}
+
+// 更新源码仓库
+int update_repository(const char *target_dir, const char *branch) {
+    char current_dir[PATH_MAX];
+    if (getcwd(current_dir, sizeof(current_dir)) == NULL) {
+        log_error("获取当前目录失败: %s", strerror(errno));
+        return -1;
+    }
+    
+    // 切换到目标目录
+    if (chdir(target_dir) != 0) {
+        log_error("无法进入目录: %s", target_dir);
+        return -1;
+    }
+    
+    // 检查是否为git仓库
+    if (!dir_exists(".git")) {
+        log_warning("非git仓库: %s", target_dir);
+        chdir(current_dir);
+        return 0;
+    }
+    
+    // 获取当前提交ID
+    FILE *git_cmd = popen("git rev-parse --short HEAD 2>/dev/null", "r");
+    char current_commit[64] = "unknown";
+    if (git_cmd != NULL) {
+        if (fgets(current_commit, sizeof(current_commit), git_cmd) != NULL) {
+            current_commit[strcspn(current_commit, "\n")] = 0;
+        }
+        pclose(git_cmd);
+    }
+    
+    log_info("开始更新源码: %s", basename((char*)target_dir));
+    log_info("当前提交: %s", current_commit);
+    
+    // 执行git fetch
+    int fetch_result = system("git fetch --all 2>&1");
+    if (fetch_result != 0) {
+        log_error("git fetch 失败");
+        chdir(current_dir);
+        return -1;
+    }
+    
+    // 重置到远程分支
+    char reset_cmd[256];
+    snprintf(reset_cmd, sizeof(reset_cmd), "git reset --hard origin/%s 2>&1", branch);
+    
+    FILE *reset_output = popen(reset_cmd, "r");
+    char output[1024] = {0};
+    if (reset_output != NULL) {
+        while (fgets(output, sizeof(output), reset_output) != NULL) {
+            // 可以记录输出，但为了简洁这里不显示
+        }
+        int reset_result = pclose(reset_output);
+        
+        // 获取新提交ID
+        git_cmd = popen("git rev-parse --short HEAD 2>/dev/null", "r");
+        char new_commit[64] = "unknown";
+        if (git_cmd != NULL) {
+            if (fgets(new_commit, sizeof(new_commit), git_cmd) != NULL) {
+                new_commit[strcspn(new_commit, "\n")] = 0;
+            }
+            pclose(git_cmd);
+        }
+        
+        if (reset_result == 0) {
+            if (strcmp(current_commit, new_commit) != 0) {
+                log_success("更新成功: %s (%s → %s)", 
+                           basename((char*)target_dir), current_commit, new_commit);
+            } else {
+                log_info("已是最新: %s (%s)", basename((char*)target_dir), current_commit);
+            }
+        } else {
+            log_error("更新失败: %s", basename((char*)target_dir));
+            log_info("错误详情: %s", output);
+        }
+        
+        chdir(current_dir);
+        return reset_result;
+    }
+    
+    chdir(current_dir);
+    return -1;
+}
+
 // 初始化目标源码
 int init_target_source(const char *model, const char *repo_url, const char *branch, 
                        bool force, bool update) {
@@ -108,9 +245,7 @@ int init_target_source(const char *model, const char *repo_url, const char *bran
             }
         } else if (update) {
             log_info("更新已存在的源码: %s", target_dir);
-            char cmd[1024];
-            snprintf(cmd, sizeof(cmd), "cd \"%s\" && git pull", target_dir);
-            return system(cmd);
+            return update_repository(target_dir, branch);
         } else {
             log_info("源码目录已存在: %s", target_dir);
             return 0;
@@ -130,18 +265,8 @@ int init_target_source(const char *model, const char *repo_url, const char *bran
         }
     }
     
-    // 克隆源码
-    char cmd[1024];
-    if (strlen(branch) > 0) {
-        snprintf(cmd, sizeof(cmd), "git clone -b %s --single-branch --depth 1 %s \"%s\"", 
-                 branch, repo_url, target_dir);
-    } else {
-        snprintf(cmd, sizeof(cmd), "git clone --single-branch --depth 1 %s \"%s\"", 
-                 repo_url, target_dir);
-    }
-    
-    log_info("执行: %s", cmd);
-    int result = system(cmd);
+    // 克隆源码（带重试机制）
+    int result = clone_repository(repo_url, branch, target_dir);
     
     if (result == 0) {
         log_success("成功初始化源码: %s", model);

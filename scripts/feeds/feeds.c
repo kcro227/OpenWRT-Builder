@@ -105,6 +105,138 @@ int parse_feeds_file(const char *filename, Feed feeds[], int *feed_count) {
     return 0;
 }
 
+// 克隆feed仓库（带重试机制）
+int clone_feed_repository(const Feed *feed, const char *path) {
+    char command[1024];
+    int result = -1;
+    
+    // 构建克隆命令
+    snprintf(command, sizeof(command), "git clone -b %s --single-branch --depth 1 %s \"%s\"", 
+             feed->branch, feed->url, path);
+    
+    // 最多重试3次
+    for (int attempt = 1; attempt <= 3; attempt++) {
+        log_info("下载尝试 (%d/3): %s", attempt, feed->name);
+        log_info("执行命令: %s", command);
+        
+        result = system(command);
+        
+        if (result == 0) {
+            log_success("下载成功: %s", feed->name);
+            return 0;
+        }
+        
+        log_warning("下载失败 (尝试: %d/3)", attempt);
+        
+        // 删除可能部分下载的目录
+        if (dir_exists(path)) {
+            remove_file_or_dir(path);
+        }
+        
+        // 指数退避等待
+        sleep(attempt * 2);
+        
+        // 最后一次尝试时，如果不指定分支失败，尝试默认分支
+        if (attempt == 3 && strlen(feed->branch) > 0) {
+            log_info("尝试默认分支");
+            snprintf(command, sizeof(command), "git clone --single-branch --depth 1 %s \"%s\"", 
+                     feed->url, path);
+            result = system(command);
+            if (result == 0) {
+                log_success("下载成功（默认分支）: %s", feed->name);
+                return 0;
+            }
+        }
+    }
+    
+    log_error("下载失败: %s", feed->name);
+    return -1;
+}
+
+// 更新feed仓库
+int update_feed_repository(const Feed *feed, const char *path) {
+    char current_dir[PATH_MAX];
+    if (getcwd(current_dir, sizeof(current_dir)) == NULL) {
+        log_error("获取当前目录失败: %s", strerror(errno));
+        return -1;
+    }
+    
+    // 切换到目标目录
+    if (chdir(path) != 0) {
+        log_error("无法进入目录: %s", path);
+        return -1;
+    }
+    
+    // 检查是否为git仓库
+    if (!dir_exists(".git")) {
+        log_warning("非git仓库: %s", feed->name);
+        chdir(current_dir);
+        return 0;
+    }
+    
+    // 获取当前提交ID
+    FILE *git_cmd = popen("git rev-parse --short HEAD 2>/dev/null", "r");
+    char current_commit[64] = "unknown";
+    if (git_cmd != NULL) {
+        if (fgets(current_commit, sizeof(current_commit), git_cmd) != NULL) {
+            current_commit[strcspn(current_commit, "\n")] = 0;
+        }
+        pclose(git_cmd);
+    }
+    
+    log_info("开始更新feed: %s", feed->name);
+    log_info("当前提交: %s", current_commit);
+    
+    // 执行git fetch
+    int fetch_result = system("git fetch --all 2>&1");
+    if (fetch_result != 0) {
+        log_error("git fetch 失败: %s", feed->name);
+        chdir(current_dir);
+        return -1;
+    }
+    
+    // 重置到远程分支
+    char reset_cmd[256];
+    snprintf(reset_cmd, sizeof(reset_cmd), "git reset --hard origin/%s 2>&1", feed->branch);
+    
+    FILE *reset_output = popen(reset_cmd, "r");
+    char output[1024] = {0};
+    if (reset_output != NULL) {
+        while (fgets(output, sizeof(output), reset_output) != NULL) {
+            // 可以记录输出，但为了简洁这里不显示
+        }
+        int reset_result = pclose(reset_output);
+        
+        // 获取新提交ID
+        git_cmd = popen("git rev-parse --short HEAD 2>/dev/null", "r");
+        char new_commit[64] = "unknown";
+        if (git_cmd != NULL) {
+            if (fgets(new_commit, sizeof(new_commit), git_cmd) != NULL) {
+                new_commit[strcspn(new_commit, "\n")] = 0;
+            }
+            pclose(git_cmd);
+        }
+        
+        if (reset_result == 0) {
+            if (strcmp(current_commit, new_commit) != 0) {
+                log_success("更新成功: %s (%s → %s)", 
+                           feed->name, current_commit, new_commit);
+            } else {
+                log_info("已是最新: %s (%s)", feed->name, current_commit);
+            }
+        } else {
+            log_error("更新失败: %s", feed->name);
+            log_info("错误详情: %s", output);
+        }
+        
+        chdir(current_dir);
+        return reset_result;
+    }
+    
+    chdir(current_dir);
+    return -1;
+}
+
 // 安装feed
 int install_feed(const Feed *feed, const char *base_dir) {
     char path[PATH_MAX];
@@ -116,13 +248,26 @@ int install_feed(const Feed *feed, const char *base_dir) {
         return 0;
     }
     
-    char command[1024];
-    // 使用 --single-branch 仅克隆指定分支，而不是整个仓库
-    snprintf(command, sizeof(command), "git clone -b %s --single-branch --depth 1 %s \"%s\"", 
-             feed->branch, feed->url, path);
+    log_info("开始安装feed: %s", feed->name);
+    log_info("仓库: %s", feed->url);
+    log_info("分支: %s", feed->branch);
+    log_info("目标路径: %s", path);
     
-    log_info("执行: %s", command);
-    int result = run_git_command(command, NULL);
+    // 创建目标目录的父目录
+    char parent_dir[PATH_MAX];
+    strncpy(parent_dir, path, sizeof(parent_dir));
+    char *parent = dirname(parent_dir);
+    
+    if (!dir_exists(parent)) {
+        log_info("创建目录: %s", parent);
+        if (create_dir(parent) != 0) {
+            log_error("创建目录失败: %s", parent);
+            return -1;
+        }
+    }
+    
+    // 克隆feed（带重试机制）
+    int result = clone_feed_repository(feed, path);
     
     if (result == 0) {
         log_success("成功安装 feed: %s", feed->name);
@@ -144,16 +289,13 @@ int update_feed(const Feed *feed, const char *base_dir) {
         return install_feed(feed, base_dir);
     }
     
-    // 进入目录并执行git pull
-    char command[256];
-    if (strlen(feed->branch) > 0) {
-        snprintf(command, sizeof(command), "git pull origin %s", feed->branch);
-    } else {
-        snprintf(command, sizeof(command), "git pull");
-    }
+    log_info("开始更新feed: %s", feed->name);
+    log_info("仓库: %s", feed->url);
+    log_info("分支: %s", feed->branch);
+    log_info("目标路径: %s", path);
     
-    log_info("更新: %s", feed->name);
-    int result = run_git_command(command, path);
+    // 更新feed仓库
+    int result = update_feed_repository(feed, path);
     
     if (result == 0) {
         log_success("成功更新 feed: %s", feed->name);
@@ -250,7 +392,7 @@ int list_feeds(Feed feeds[], int feed_count) {
     return 0;
 }
 
-// 执行git命令
+// 执行git命令（保留原函数，但主要逻辑已移到新函数中）
 int run_git_command(const char *command, const char *path) {
     int result;
     
@@ -367,19 +509,23 @@ int main(int argc, char *argv[]) {
     // 执行操作
     int result = 0;
     int processed = 0;
+    int success = 0;
     
     for (int i = 0; i < feed_count; i++) {
         if (feed_name == NULL || strcmp(feeds[i].name, feed_name) == 0) {
-            log_info("处理: %s", feeds[i].name);
             processed++;
             
             if (strcmp(action, "install") == 0) {
-                if (install_feed(&feeds[i], feeds_dir_path) != 0) {
+                if (install_feed(&feeds[i], feeds_dir_path) == 0) {
+                    success++;
+                } else {
                     log_error("安装feed %s 失败", feeds[i].name);
                     result = 1;
                 }
             } else if (strcmp(action, "update") == 0) {
-                if (update_feed(&feeds[i], feeds_dir_path) != 0) {
+                if (update_feed(&feeds[i], feeds_dir_path) == 0) {
+                    success++;
+                } else {
                     log_error("更新feed %s 失败", feeds[i].name);
                     result = 1;
                 }
@@ -398,13 +544,15 @@ int main(int argc, char *argv[]) {
         result = 1;
     }
     
-    free(project_root);
-    
-    if (result == 0) {
-        log_success("操作完成");
-    } else {
-        log_error("操作完成，但有错误发生");
+    // 输出统计信息
+    if (processed > 0) {
+        if (success == processed) {
+            log_success("操作完成 (%d/%d 全部成功)", success, processed);
+        } else {
+            log_error("操作完成 (成功: %d/%d, 失败: %d)", success, processed, processed - success);
+        }
     }
     
+    free(project_root);
     return result;
 }
