@@ -1,7 +1,7 @@
 # 编译器设置
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE
-LDFLAGS = 
+LDFLAGS = -L../utils -lutils
 TARGET = backup
 SRCDIR = .
 OBJDIR = .
