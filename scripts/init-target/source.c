@@ -125,3 +125,53 @@ int pull_latest_changes(const char *target_dir, const char *reference) {
     log_info("拉取最新代码: %s", cmd);
     return system(cmd);
 }
+
+// 获取提交信息
+int get_commit_info(const char *target_dir, const char *commit, char *info, size_t size) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd \"%s\" && git log -1 --pretty=format:%%s %s", target_dir, commit);
+    
+    FILE *fp = popen(cmd, "r");
+    if (fp == NULL) {
+        return -1;
+    }
+    
+    if (fgets(info, size, fp) == NULL) {
+        pclose(fp);
+        return -1;
+    }
+    
+    // 移除换行符
+    info[strcspn(info, "\n")] = 0;
+    
+    pclose(fp);
+    return 0;
+}
+
+// 检查是否需要获取远程提交
+bool need_fetch_commit(const char *target_dir, const char *commit) {
+    // 首先检查本地是否存在该提交
+    if (is_valid_commit(target_dir, commit)) {
+        return false;
+    }
+    
+    // 本地不存在，需要从远程获取
+    return true;
+}
+
+// 获取远程提交
+int fetch_commit(const char *target_dir, const char *commit) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd \"%s\" && git fetch origin %s", target_dir, commit);
+    
+    log_info("获取远程提交: %s", commit);
+    int result = system(cmd);
+    
+    if (result == 0) {
+        log_success("成功获取提交: %s", commit);
+    } else {
+        log_error("获取提交失败: %s", commit);
+    }
+    
+    return result;
+}

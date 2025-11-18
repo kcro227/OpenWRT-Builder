@@ -119,7 +119,8 @@ install: check-target
 build: check-target
 	@echo "编译目标: $(SELECTED_TARGET)"
 	@$(CUSTOMIZE_TOOL) configs/$(SELECTED_TARGET)/customize.config -c build -s $(SRC_DIR)
-	@make -C srcs/$(SELECTED_TARGET) -j$(BUILD_JOBS) V=s
+	@ mkdir -p  configs/$(SELECTED_TARGET)/log
+	@time  make -C srcs/$(SELECTED_TARGET) -j$(BUILD_JOBS) V=s | tee configs/$(SELECTED_TARGET)/log/$(shell date +%Y%m%d_%H%M%S)_build.log
 	@echo "编译完成"
 
 # 复制编译产物到指定路径
