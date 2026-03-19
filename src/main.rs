@@ -1,5 +1,6 @@
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
 use serde::{Deserialize, Serialize};
+use colored::*;
 use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
@@ -30,54 +31,54 @@ fn main() {
     match command.as_str() {
         "list" => {
             if let Err(err) = list_targets(TARGETS_DIR) {
-                eprintln!("错误: {}", err);
+                eprintln!("{}", format!("错误: {}", err).red());
                 process::exit(1);
             }
         }
         "change" => {
             if let Err(err) = change_target(TARGETS_DIR) {
-                eprintln!("错误: {}", err);
+                eprintln!("{}", format!("错误: {}", err).red());
                 process::exit(1);
             }
         }
         "target" => {
             if args.len() < 3 {
-                eprintln!("请指定 target 子命令: init 或 update");
+                eprintln!("{}", "请指定 target 子命令: init 或 update".red());
                 process::exit(1);
             }
             let sub = &args[2];
             match sub.as_str() {
                 "init" => {
                     if let Err(err) = target_init() {
-                        eprintln!("错误: {}", err);
+                        eprintln!("{}", format!("错误: {}", err).red());
                         process::exit(1);
                     }
                 }
                 "update" => {
                     if let Err(err) = target_update() {
-                        eprintln!("错误: {}", err);
+                        eprintln!("{}", format!("错误: {}", err).red());
                         process::exit(1);
                     }
                 }
                 _ => {
-                    eprintln!("未知 target 子命令: {}", sub);
+                    eprintln!("{}", format!("未知 target 子命令: {}", sub).red());
                     process::exit(1);
                 }
             }
         }
         "completions" => {
             if args.len() < 3 {
-                eprintln!("请指定 shell 类型，例如: owbm completions bash");
+                eprintln!("{}", "请指定 shell 类型，例如: owbm completions bash".red());
                 process::exit(1);
             }
             let shell = &args[2];
             if let Err(err) = print_completions(shell) {
-                eprintln!("错误: {}", err);
+                eprintln!("{}", format!("错误: {}", err).red());
                 process::exit(1);
             }
         }
         _ => {
-            eprintln!("未知命令: {}", command);
+            eprintln!("{}", format!("未知命令: {}", command).red());
             print_help();
             process::exit(1);
         }
@@ -85,13 +86,13 @@ fn main() {
 }
 
 fn print_help() {
-    println!("owbm - OpenWrt Build Manager");
-    println!("用法:");
-    println!("  owbm list                   列出所有可用的编译目标");
-    println!("  owbm change                 交互式选择编译目标并保存到 .config");
-    println!("  owbm target init            初始化当前目标的源码配置并下载");
-    println!("  owbm target update          更新当前目标的源码");
-    println!("  owbm completions <shell>     生成 shell 补全脚本 (目前支持 bash)");
+    println!("{}", "owbm - OpenWrt Build Manager".cyan().bold());
+    println!("{}", "用法:".yellow());
+    println!("  {} {}", "owbm list".green(), "                 列出所有可用的编译目标".white());
+    println!("  {} {}", "owbm change".green(), "               交互式选择编译目标并保存到 .config".white());
+    println!("  {} {}", "owbm target init".green(), "          初始化当前目标的源码配置并下载".white());
+    println!("  {} {}", "owbm target update".green(), "        更新当前目标的源码".white());
+    println!("  {} {}", "owbm completions <shell>".green(), "   生成 shell 补全脚本 (目前支持 bash)".white());
 }
 
 /// 列出 targets 目录下所有一级子目录
@@ -101,11 +102,11 @@ fn list_targets<P: AsRef<Path>>(path: P) -> Result<(), Box<dyn std::error::Error
 
     let targets = read_targets(path)?;
     if targets.is_empty() {
-        println!("没有找到任何目标。");
+        println!("{}", "没有找到任何目标。".yellow());
     } else {
-        println!("可用的编译目标:");
+        println!("{}", "可用的编译目标:".cyan());
         for target in targets {
-            println!("  {}", target);
+            println!("  {}", target.green());
         }
     }
     Ok(())
@@ -143,7 +144,7 @@ fn change_target<P: AsRef<Path>>(path: P) -> Result<(), Box<dyn std::error::Erro
 
     let selected = &targets[selection];
     update_config(CONFIG_TARGET_KEY, selected)?;
-    println!("已选择目标: {}，并保存到 .config", selected);
+    println!("{}", format!("已选择目标: {}，并保存到 .config", selected).green());
 
     Ok(())
 }
@@ -152,7 +153,7 @@ fn change_target<P: AsRef<Path>>(path: P) -> Result<(), Box<dyn std::error::Erro
 fn target_init() -> Result<(), Box<dyn std::error::Error>> {
     // 1. 读取当前目标
     let target = get_current_target()?;
-    println!("当前目标: {}", target);
+    println!("{}", format!("当前目标: {}", target).cyan());
 
     // 2. 确保 targets/<target> 目录存在
     let target_dir = Path::new(TARGETS_DIR).join(&target);
@@ -168,22 +169,22 @@ fn target_init() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::from_str(&content)?
     } else {
         // 创建模板并提示用户编辑
-        println!("source.json 不存在，正在创建模板...");
+        println!("{}", "source.json 不存在，正在创建模板...".yellow());
         let template = SourceConfig {
             url: "https://github.com/example/repo.git".to_string(),
             revision: "main".to_string(),
         };
         let template_content = serde_json::to_string_pretty(&template)?;
         fs::write(&source_json_path, &template_content)?;
-        println!("模板已创建: {}", source_json_path.display());
-        println!("请编辑该文件，填入正确的 URL 和 revision，然后再次运行 owbm target init");
+        println!("{}", format!("模板已创建: {}", source_json_path.display()).green());
+        println!("{}", "请编辑该文件，填入正确的 URL 和 revision，然后再次运行 owbm target init".cyan());
         return Ok(());
     };
 
     // 4. 将 source_config 写入 .config 的 CONFIG_SRC
     let src_value = format!("{};{}", source_config.url, source_config.revision);
     update_config(CONFIG_SRC_KEY, &src_value)?;
-    println!("已更新 .config 中的 {}={}", CONFIG_SRC_KEY, src_value);
+    println!("{}", format!("已更新 .config 中的 {}={}", CONFIG_SRC_KEY, src_value).green());
 
     // 5. 下载源码到 srcs/<target>
     download_source(&target, &source_config)?;
@@ -194,7 +195,7 @@ fn target_init() -> Result<(), Box<dyn std::error::Error>> {
 /// target update 命令
 fn target_update() -> Result<(), Box<dyn std::error::Error>> {
     let target = get_current_target()?;
-    println!("当前目标: {}", target);
+    println!("{}", format!("当前目标: {}", target).cyan());
 
     // 读取 CONFIG_SRC
     let src_value = read_config_value(CONFIG_SRC_KEY)?;
@@ -206,7 +207,7 @@ fn target_update() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 进入目录执行 git pull 和 checkout
-    println!("正在更新 {} 的源码...", target);
+    println!("{}", format!("正在更新 {} 的源码...", target).cyan());
     let status = process::Command::new("git")
         .arg("-C")
         .arg(&src_dir)
@@ -241,10 +242,10 @@ fn target_update() -> Result<(), Box<dyn std::error::Error>> {
         }
     } else {
         // 是 commit hash，只需要 fetch 后 checkout 即可
-        println!("已切换到 commit {}", revision);
+        println!("{}", format!("已切换到 commit {}", revision).green());
     }
 
-    println!("源码更新完成。");
+    println!("{}", "源码更新完成。".green());
     Ok(())
 }
 
@@ -286,7 +287,7 @@ fn parse_src_value(value: &str) -> Result<(String, String), Box<dyn std::error::
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
-/// 下载源码到 srcs/<target>
+/// 下载源码到 srcs/<target> (浅克隆)
 fn download_source(target: &str, config: &SourceConfig) -> Result<(), Box<dyn std::error::Error>> {
     let src_dir = Path::new(SRCS_DIR).join(target);
     if src_dir.exists() {
@@ -296,7 +297,7 @@ fn download_source(target: &str, config: &SourceConfig) -> Result<(), Box<dyn st
         if confirm {
             fs::remove_dir_all(&src_dir)?;
         } else {
-            println!("取消下载。");
+            println!("{}", "取消下载。".yellow());
             return Ok(());
         }
     }
@@ -308,9 +309,11 @@ fn download_source(target: &str, config: &SourceConfig) -> Result<(), Box<dyn st
         }
     }
 
-    println!("正在克隆 {} 到 {}...", config.url, src_dir.display());
+    println!("{}", format!("正在浅克隆 {} 到 {}...", config.url, src_dir.display()).cyan());
     let status = process::Command::new("git")
         .arg("clone")
+        .arg("--depth")
+        .arg("1")
         .arg(&config.url)
         .arg(&src_dir)
         .status()?;
@@ -318,8 +321,8 @@ fn download_source(target: &str, config: &SourceConfig) -> Result<(), Box<dyn st
         return Err("git clone 失败".into());
     }
 
-    // checkout 指定 revision
-    println!("正在切换到 revision {}...", config.revision);
+    // checkout 指定 revision（浅克隆可能无法切换到历史 commit，但指定分支或最新 commit 可以）
+    println!("{}", format!("正在切换到 revision {}...", config.revision).cyan());
     let status = process::Command::new("git")
         .arg("-C")
         .arg(&src_dir)
@@ -330,7 +333,7 @@ fn download_source(target: &str, config: &SourceConfig) -> Result<(), Box<dyn st
         return Err(format!("git checkout {} 失败", config.revision).into());
     }
 
-    println!("源码下载完成。");
+    println!("{}", "源码下载完成。".green());
     Ok(())
 }
 
@@ -435,7 +438,7 @@ fn read_targets(path: &Path) -> Result<Vec<String>, Box<dyn std::error::Error>> 
             if let Some(name) = entry.file_name().to_str() {
                 targets.push(name.to_string());
             } else {
-                eprintln!("警告: 忽略非 UTF-8 目录名: {:?}", entry.file_name());
+                eprintln!("{}", format!("警告: 忽略非 UTF-8 目录名: {:?}", entry.file_name()).yellow());
             }
         }
     }
