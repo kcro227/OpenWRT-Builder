@@ -462,7 +462,7 @@ fn target_feed() -> Result<(), Box<dyn std::error::Error>> {
 /// custom 命令：执行当前目标下的自定义脚本
 fn run_custom_script(name: &str, extra_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let target = get_current_target()?;
-    let cus_dir = Path::new(TARGETS_DIR).join(&target).join("cus");
+    let cus_dir = Path::new(TARGETS_DIR).join(&target).join("custom");
     if !cus_dir.exists() {
         return Err(format!("自定义脚本目录不存在: {}", cus_dir.display()).into());
     }
