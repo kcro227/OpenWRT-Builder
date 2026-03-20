@@ -112,19 +112,26 @@ fn main() {
                 }
             }
         }
-        "completions" => {
-            if args.len() < 3 {
-                eprintln!("{}", "请指定 shell 类型，例如: owbm completions bash".red());
-                process::exit(1);
-            }
-            let shell = &args[2];
-            if let Err(err) = print_completions(shell) {
+        "sync" => {
+            if let Err(err) = config_sync() {
                 eprintln!("{}", format!("错误: {}", err).red());
                 process::exit(1);
             }
         }
-        "sync" => {
-            if let Err(err) = config_sync() {
+        "build" => {
+            if let Err(err) = build() {
+                eprintln!("{}", format!("错误: {}", err).red());
+                process::exit(1);
+            }
+        }
+        "custom" => {
+            if args.len() < 3 {
+                eprintln!("{}", "请指定要执行的自定义脚本名称".red());
+                process::exit(1);
+            }
+            let script_name = &args[2];
+            let extra_args: Vec<String> = args.iter().skip(3).cloned().collect();
+            if let Err(err) = run_custom_script(script_name, &extra_args) {
                 eprintln!("{}", format!("错误: {}", err).red());
                 process::exit(1);
             }
@@ -161,8 +168,9 @@ fn print_help() {
     println!("  {} {}", "owbm target download".green(), "       下载所需的软件包 (make download)".white());
     println!("  {} {}", "owbm package feed".green(), "         下载 feeds.config 中定义的软件包".white());
     println!("  {} {}", "owbm package install".green(), "      根据 .config 安装选中的软件包".white());
+    println!("  {} {}", "owbm build".green(), "                编译源码".white());
+    println!("  {} {}", "owbm custom <name>".green(), "         执行当前目标的自定义脚本".white());
     println!("  {} {}", "owbm command \"<cmd>\"".green(), "     在源码目录中执行任意命令".white());
-    println!("  {} {}", "owbm completions <shell>".green(), "   生成 shell 补全脚本 (目前支持 bash)".white());
 }
 
 /// 列出 targets 目录下所有一级子目录
@@ -366,21 +374,53 @@ fn target_update() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// target config 命令：运行 make menuconfig
-fn target_config() -> Result<(), Box<dyn std::error::Error>> {
-    let target = get_current_target()?;
-    let src_dir = Path::new(SRCS_DIR).join(&target);
+/// 通用函数：在源码目录中执行 make 命令，传递所有额外参数
+fn run_make(target: &str, make_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let src_dir = Path::new(SRCS_DIR).join(target);
     if !src_dir.exists() {
         return Err(format!("源码目录 '{}' 不存在，请先运行 owbm target init", src_dir.display()).into());
     }
-    let status = process::Command::new("make")
-        .arg("-C")
-        .arg(&src_dir)
-        .arg("menuconfig")
-        .status()?;
+
+    let mut cmd = process::Command::new("make");
+    cmd.arg("-C").arg(&src_dir);
+    cmd.args(make_args);
+
+    println!("{}", format!("执行命令: {:?}", cmd).cyan());
+    let status = cmd.status()?;
     if !status.success() {
-        return Err("make menuconfig 失败".into());
+        return Err("make 命令执行失败".into());
     }
+    Ok(())
+}
+
+/// target config 命令：运行 make menuconfig，传递额外参数
+fn target_config() -> Result<(), Box<dyn std::error::Error>> {
+    let target = get_current_target()?;
+    let args: Vec<String> = env::args().collect();
+    let extra_args: Vec<String> = args.iter().skip(3).cloned().collect(); // 跳过 "target" 和 "config"
+    let mut make_args = vec!["menuconfig".to_string()];
+    make_args.extend(extra_args);
+    run_make(&target, &make_args)?;
+    Ok(())
+}
+
+/// target download 命令：调用 make download，传递所有额外参数
+fn target_download() -> Result<(), Box<dyn std::error::Error>> {
+    let target = get_current_target()?;
+    let args: Vec<String> = env::args().collect();
+    let extra_args: Vec<String> = args.iter().skip(3).cloned().collect(); // 跳过 "target" 和 "download"
+    let mut make_args = vec!["download".to_string()];
+    make_args.extend(extra_args);
+    run_make(&target, &make_args)?;
+    Ok(())
+}
+
+/// build 命令：直接编译源码，传递所有额外参数
+fn build() -> Result<(), Box<dyn std::error::Error>> {
+    let target = get_current_target()?;
+    let args: Vec<String> = env::args().collect();
+    let extra_args: Vec<String> = args.iter().skip(2).cloned().collect(); // 跳过 "build"
+    run_make(&target, &extra_args)?;
     Ok(())
 }
 
@@ -419,30 +459,63 @@ fn target_feed() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// target download 命令：调用 make download，支持 -j 参数
-fn target_download() -> Result<(), Box<dyn std::error::Error>> {
+/// custom 命令：执行当前目标下的自定义脚本
+fn run_custom_script(name: &str, extra_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let target = get_current_target()?;
-    let src_dir = Path::new(SRCS_DIR).join(&target);
-    if !src_dir.exists() {
-        return Err(format!("源码目录 '{}' 不存在，请先运行 owbm target init", src_dir.display()).into());
+    let cus_dir = Path::new(TARGETS_DIR).join(&target).join("cus");
+    if !cus_dir.exists() {
+        return Err(format!("自定义脚本目录不存在: {}", cus_dir.display()).into());
     }
 
-    let args: Vec<String> = env::args().collect();
-    let mut make_args = vec!["-C".to_string(), src_dir.to_string_lossy().to_string(), "download".to_string()];
-    for arg in args.iter().skip(3) { // 跳过 "target" 和 "download"
-        if arg.starts_with("-j") {
-            make_args.push(arg.clone());
+    // 扫描目录，匹配以 name 结尾且符合 `<interpreter>_<name>.sh` 格式的文件
+    let entries = fs::read_dir(&cus_dir)?;
+    let mut matches = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+        // 格式：解释器_名称.扩展名
+        if let Some(underscore_pos) = file_name_str.find('_') {
+            let (_, rest) = file_name_str.split_at(underscore_pos + 1);
+            if let Some(dot_pos) = rest.find('.') {
+                let base_name = &rest[..dot_pos];
+                if base_name == name {
+                    matches.push((file_name_str.to_string(), entry.path()));
+                }
+            } else {
+                // 无扩展名，整个剩余部分作为名称
+                if rest == name {
+                    matches.push((file_name_str.to_string(), entry.path()));
+                }
+            }
         }
     }
 
-    println!("{}", "正在下载软件包 (make download)...".cyan());
-    let status = process::Command::new("make")
-        .args(&make_args)
-        .status()?;
-    if !status.success() {
-        return Err("make download 失败".into());
+    if matches.is_empty() {
+        return Err(format!("未找到脚本 '{}' 在目录 {}", name, cus_dir.display()).into());
     }
-    println!("{}", "下载完成。".green());
+
+    if matches.len() > 1 {
+        println!(
+            "{}",
+            format!("找到多个匹配脚本，将使用第一个: {}", matches[0].0).yellow()
+        );
+    }
+
+    let (script_name, script_path) = &matches[0];
+    let interpreter = script_name.split('_').next().unwrap_or("bash");
+    println!(
+        "{}",
+        format!("执行自定义脚本: {} (解释器: {})", script_name, interpreter).cyan()
+    );
+
+    let mut cmd = process::Command::new(interpreter);
+    cmd.arg(script_path);
+    cmd.args(extra_args);
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err(format!("脚本 '{}' 执行失败", script_name).into());
+    }
     Ok(())
 }
 
@@ -496,7 +569,12 @@ fn package_feed() -> Result<(), Box<dyn std::error::Error>> {
 
         let (base_url, revision) = if let Some(semi_pos) = url_and_rev.find(';') {
             let (url, rev) = url_and_rev.split_at(semi_pos);
-            (url, Some(rev.trim_start_matches(';')))
+            let rev = rev.trim_start_matches(';');
+            if rev.is_empty() {
+                (url, None)
+            } else {
+                (url, Some(rev))
+            }
         } else {
             (url_and_rev, None)
         };
@@ -576,7 +654,6 @@ fn package_install() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
-    // 修改路径：从 packages/custom 改为 package/custom
     let custom_dir = target_src_dir.join("package").join("custom");
     fs::create_dir_all(&custom_dir)?;
 
@@ -828,35 +905,6 @@ fn update_config(key: &str, value: &str) -> Result<(), Box<dyn std::error::Error
     let mut file = File::create(config_path)?;
     for line in lines {
         writeln!(file, "{}", line)?;
-    }
-    Ok(())
-}
-
-/// 输出 shell 补全脚本（bash）
-fn print_completions(shell: &str) -> Result<(), Box<dyn std::error::Error>> {
-    match shell {
-        "bash" => {
-            println!("# 将以下内容添加到 .bashrc 或执行 source <(owbm completions bash)");
-            println!("_owbm_completions() {{");
-            println!("  local cur prev words cword");
-            println!("  _init_completion || return");
-            println!("  case $prev in");
-            println!("    owbm)");
-            println!("      COMPREPLY=($(compgen -W \"list change sync target package completions command\" -- \"$cur\"))");
-            println!("      ;;");
-            println!("    target)");
-            println!("      COMPREPLY=($(compgen -W \"init update config feed download\" -- \"$cur\"))");
-            println!("      ;;");
-            println!("    package)");
-            println!("      COMPREPLY=($(compgen -W \"feed install\" -- \"$cur\"))");
-            println!("      ;;");
-            println!("    *)");
-            println!("      ;;");
-            println!("  esac");
-            println!("}}");
-            println!("complete -F _owbm_completions owbm");
-        }
-        _ => return Err(format!("不支持的 shell: {}", shell).into()),
     }
     Ok(())
 }
