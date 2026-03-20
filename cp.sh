@@ -1,1 +1,0 @@
-cp target/debug/openwrtbuild  owbm
