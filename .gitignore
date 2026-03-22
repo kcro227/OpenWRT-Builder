@@ -3,3 +3,4 @@
 ./owbm
 packages/*
 srcs
+targets/**
