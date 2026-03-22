@@ -4,3 +4,4 @@
 packages/*
 srcs
 targets/**
+!targets/xr30/**
