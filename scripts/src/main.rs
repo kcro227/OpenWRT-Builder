@@ -1,6 +1,7 @@
 use colored::*;
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
@@ -201,8 +202,8 @@ fn list_targets<P: AsRef<Path>>(path: P) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-/// 同步软件包配置：读取 targets/<target>/packagelist.txt，将每个包名写入 .config 的 CONFIG_PACKAGE_包名=y
-/// 返回添加的包数量（新添加或更新的）
+/// 同步软件包配置：根据 packagelist.txt 添加或移除 .config 中的 CONFIG_PACKAGE_* = y 条目
+/// 返回添加的包数量（保持接口兼容）
 fn sync_package_config(target: &str) -> Result<usize, Box<dyn std::error::Error>> {
     let packagelist_path = Path::new(TARGETS_DIR).join(target).join("packagelist.txt");
     if !packagelist_path.exists() {
@@ -210,20 +211,96 @@ fn sync_package_config(target: &str) -> Result<usize, Box<dyn std::error::Error>
         return Ok(0);
     }
 
+    // 读取期望包名
     let file = File::open(&packagelist_path)?;
     let reader = BufReader::new(file);
-    let mut count = 0;
+    let mut expected = HashSet::new();
     for line in reader.lines() {
         let line = line?;
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let pkg_key = format!("CONFIG_PACKAGE_{}", line);
-        update_config(&pkg_key, "y")?;
-        count += 1;
+        expected.insert(line.to_string());
     }
-    Ok(count)
+
+    // 读取当前 .config，收集当前包名（只统计 =y 的）并保留所有行
+    let config_path = env::current_dir()?.join(CONFIG_FILE);
+    let mut lines = Vec::new();
+    let mut current = HashSet::new();
+    if config_path.exists() {
+        let content = fs::read_to_string(&config_path)?;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("CONFIG_PACKAGE_") && trimmed.ends_with("=y") {
+                if let Some(pkg) = trimmed
+                    .strip_prefix("CONFIG_PACKAGE_")
+                    .and_then(|s| s.strip_suffix("=y"))
+                {
+                    current.insert(pkg.to_string());
+                }
+            }
+            lines.push(line.to_string()); // 保存原始行（包括非包配置）
+        }
+    }
+
+   // 计算差异
+    let to_add: Vec<&String> = expected.difference(&current).collect();
+    let to_remove: Vec<&String> = current.difference(&expected).collect();
+
+    // 打印变化
+    if !to_add.is_empty() {
+        println!("{}", format!("添加软件包配置 ({}个):", to_add.len()).green());
+        for pkg in &to_add {   // 借用，不移动
+            println!("  + {}", pkg);
+        }
+    }
+    if !to_remove.is_empty() {
+        println!("{}", format!("移除软件包配置 ({}个):", to_remove.len()).yellow());
+        for pkg in &to_remove { // 借用，不移动
+            println!("  - {}", pkg);
+        }
+    }
+    if to_add.is_empty() && to_remove.is_empty() {
+        println!("{}", "软件包配置无变化。".yellow());
+        return Ok(0);
+    }
+
+    // 重新生成 .config 内容
+    let mut new_lines = Vec::new();
+    for line in lines {
+        // 检查是否为 CONFIG_PACKAGE_xxx=y 行
+        if line.starts_with("CONFIG_PACKAGE_") && line.ends_with("=y") {
+            if let Some(pkg) = line
+                .strip_prefix("CONFIG_PACKAGE_")
+                .and_then(|s| s.strip_suffix("=y"))
+            {
+                // 如果包名在期望集合中，保留；否则跳过（删除）
+                if expected.contains(pkg) {
+                    new_lines.push(line);
+                }
+            } else {
+                // 不是标准格式，保留
+                new_lines.push(line);
+            }
+        } else {
+            // 其他行保留
+            new_lines.push(line);
+        }
+    }
+
+    // 添加缺失的包
+    for pkg in &to_add {
+        new_lines.push(format!("CONFIG_PACKAGE_{}=y", pkg));
+    }
+
+    // 写入文件
+    let mut file = File::create(config_path)?;
+    for line in new_lines {
+        writeln!(file, "{}", line)?;
+    }
+
+    Ok(to_add.len())
 }
 
 /// 交互式选择目标，以 CONFIG_TARGET=xxx 格式更新 .config
@@ -264,12 +341,7 @@ fn change_target<P: AsRef<Path>>(path: P) -> Result<(), Box<dyn std::error::Erro
     );
 
     // 同步包配置
-    let added = sync_package_config(selected)?;
-    if added > 0 {
-        println!("{}", format!("已同步 {} 个软件包配置到 .config", added).green());
-    } else {
-        println!("{}", "软件包配置无变化。".yellow());
-    }
+    sync_package_config(selected)?;
     Ok(())
 }
 
@@ -321,13 +393,7 @@ fn target_init() -> Result<(), Box<dyn std::error::Error>> {
     download_source(&target, &source_config)?;
 
     // 6. 同步包配置
-    let added = sync_package_config(&target)?;
-    if added > 0 {
-        println!("{}", format!("已同步 {} 个软件包配置到 .config", added).green());
-    } else {
-        println!("{}", "未找到 packagelist.txt 或文件为空，软件包配置无变化。".yellow());
-    }
-
+    sync_package_config(&target)?;
     Ok(())
 }
 
@@ -983,11 +1049,6 @@ fn read_targets(path: &Path) -> Result<Vec<String>, Box<dyn std::error::Error>> 
 fn config_sync() -> Result<(), Box<dyn std::error::Error>> {
     let target = get_current_target()?;
     println!("{}", format!("同步目标 {} 的配置...", target).cyan());
-    let added = sync_package_config(&target)?;
-    if added > 0 {
-        println!("{}", format!("已同步 {} 个软件包配置到 .config", added).green());
-    } else {
-        println!("{}", "软件包配置无变化。".yellow());
-    }
+    sync_package_config(&target)?;
     Ok(())
 }
