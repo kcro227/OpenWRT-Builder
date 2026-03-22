@@ -7,6 +7,11 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use walkdir::WalkDir;
+use nix::sys::signal::{kill, Signal};
+use nix::unistd::Pid;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::Duration;
 
 const TARGETS_DIR: &str = "targets";
 const SRCS_DIR: &str = "srcs";
@@ -22,7 +27,13 @@ struct SourceConfig {
     revision: String,
 }
 
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
 fn main() {
+    ctrlc::set_handler(|| {
+        INTERRUPTED.store(true, Ordering::SeqCst);
+    }).expect("设置 Ctrl+C 处理函数失败");
+
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
@@ -374,7 +385,7 @@ fn target_update() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// 通用函数：在源码目录中执行 make 命令，传递所有额外参数
+/// 通用函数：在源码目录中执行 make 命令，传递所有额外参数（支持信号中断）
 fn run_make(target: &str, make_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let src_dir = Path::new(SRCS_DIR).join(target);
     if !src_dir.exists() {
@@ -386,11 +397,35 @@ fn run_make(target: &str, make_args: &[String]) -> Result<(), Box<dyn std::error
     cmd.args(make_args);
 
     println!("{}", format!("执行命令: {:?}", cmd).cyan());
-    let status = cmd.status()?;
-    if !status.success() {
-        return Err("make 命令执行失败".into());
+
+    let mut child = cmd.spawn()?;
+    let pid = child.id() as i32;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return Err("make 命令执行失败".into());
+                }
+                return Ok(());
+            }
+            Ok(None) => {
+                if INTERRUPTED.load(Ordering::SeqCst) {
+                    println!("{}", "收到中断信号，正在终止 make...".yellow());
+                    // 向 make 进程发送 SIGINT，使其正常清理子进程
+                    kill(Pid::from_raw(pid), Signal::SIGINT)?;
+                    // 等待 make 进程退出
+                    let _ = child.wait()?;
+                    // 返回错误，表示被中断
+                    return Err("make 命令被中断".into());
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => {
+                return Err(format!("等待子进程失败: {}", e).into());
+            }
+        }
     }
-    Ok(())
 }
 
 /// target config 命令：运行 make menuconfig，传递额外参数
