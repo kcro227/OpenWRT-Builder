@@ -58,7 +58,7 @@ fn main() {
         }
         "target" => {
             if args.len() < 3 {
-                eprintln!("{}", "请指定 target 子命令: init, update, config, feed, download".red());
+                eprintln!("{}", "请指定 target 子命令: init, update, config, feed, download, clean, distclean".red());
                 process::exit(1);
             }
             let sub = &args[2];
@@ -89,6 +89,18 @@ fn main() {
                 }
                 "download" => {
                     if let Err(err) = target_download() {
+                        eprintln!("{}", format!("错误: {}", err).red());
+                        process::exit(1);
+                    }
+                }
+                "clean" => {
+                    if let Err(err) = target_clean() {
+                        eprintln!("{}", format!("错误: {}", err).red());
+                        process::exit(1);
+                    }
+                }
+                "distclean" => {
+                    if let Err(err) = target_distclean() {
                         eprintln!("{}", format!("错误: {}", err).red());
                         process::exit(1);
                     }
@@ -184,6 +196,8 @@ fn print_help() {
     println!("  {} {}", "owbm target config".green(), "        运行 make menuconfig 配置内核".white());
     println!("  {} {}", "owbm target feed".green(), "          更新并安装 feeds".white());
     println!("  {} {}", "owbm target download".green(), "       下载所需的软件包 (make download)".white());
+    println!("  {} {}", "owbm target clean".green(), "         清理编译中间文件 (make clean)".white());
+    println!("  {} {}", "owbm target distclean".green(), "     彻底清理 (make distclean)".white());
     println!("  {} {}", "owbm package feed".green(), "         下载 feeds.config 中定义的软件包".white());
     println!("  {} {}", "owbm package update".green(), "       更新 feeds.config 中已下载的软件包".white());
     println!("  {} {}", "owbm package install".green(), "      根据 .config 安装选中的软件包".white());
@@ -518,6 +532,28 @@ fn target_download() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let extra_args: Vec<String> = args.iter().skip(3).cloned().collect(); // 跳过 "target" 和 "download"
     let mut make_args = vec!["download".to_string()];
+    make_args.extend(extra_args);
+    run_make(&target, &make_args)?;
+    Ok(())
+}
+
+/// target clean 命令：执行 make clean 清理编译中间文件
+fn target_clean() -> Result<(), Box<dyn std::error::Error>> {
+    let target = get_current_target()?;
+    let args: Vec<String> = env::args().collect();
+    let extra_args: Vec<String> = args.iter().skip(3).cloned().collect(); // 跳过 "target" 和 "clean"
+    let mut make_args = vec!["clean".to_string()];
+    make_args.extend(extra_args);
+    run_make(&target, &make_args)?;
+    Ok(())
+}
+
+/// target distclean 命令：执行 make distclean 彻底清理
+fn target_distclean() -> Result<(), Box<dyn std::error::Error>> {
+    let target = get_current_target()?;
+    let args: Vec<String> = env::args().collect();
+    let extra_args: Vec<String> = args.iter().skip(3).cloned().collect(); // 跳过 "target" 和 "distclean"
+    let mut make_args = vec!["distclean".to_string()];
     make_args.extend(extra_args);
     run_make(&target, &make_args)?;
     Ok(())
