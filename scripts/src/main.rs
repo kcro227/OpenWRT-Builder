@@ -101,13 +101,19 @@ fn main() {
         }
         "package" => {
             if args.len() < 3 {
-                eprintln!("{}", "请指定 package 子命令: feed 或 install".red());
+                eprintln!("{}", "请指定 package 子命令: feed, update 或 install".red());
                 process::exit(1);
             }
             let sub = &args[2];
             match sub.as_str() {
                 "feed" => {
                     if let Err(err) = package_feed() {
+                        eprintln!("{}", format!("错误: {}", err).red());
+                        process::exit(1);
+                    }
+                }
+                "update" => {
+                    if let Err(err) = package_update() {
                         eprintln!("{}", format!("错误: {}", err).red());
                         process::exit(1);
                     }
@@ -179,6 +185,7 @@ fn print_help() {
     println!("  {} {}", "owbm target feed".green(), "          更新并安装 feeds".white());
     println!("  {} {}", "owbm target download".green(), "       下载所需的软件包 (make download)".white());
     println!("  {} {}", "owbm package feed".green(), "         下载 feeds.config 中定义的软件包".white());
+    println!("  {} {}", "owbm package update".green(), "       更新 feeds.config 中已下载的软件包".white());
     println!("  {} {}", "owbm package install".green(), "      根据 .config 安装选中的软件包".white());
     println!("  {} {}", "owbm build".green(), "                编译源码".white());
     println!("  {} {}", "owbm custom <name>".green(), "         执行当前目标的自定义脚本".white());
@@ -737,6 +744,76 @@ fn package_feed() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("{}", format!("下载 feed {} 失败", feed_name).red());
         } else {
             println!("{}", format!("下载 feed {} 完成", feed_name).green());
+        }
+    }
+
+    Ok(())
+}
+
+/// package update: 更新 feeds.config 中定义的已下载软件包
+fn package_update() -> Result<(), Box<dyn std::error::Error>> {
+    let feed_config_path = Path::new(PACKAGES_DIR).join(FEED_CONFIG_FILE);
+    if !feed_config_path.exists() {
+        return Err(format!(
+            "未找到 {}，请先创建 feeds 配置。",
+            feed_config_path.display()
+        )
+        .into());
+    }
+
+    let file = File::open(&feed_config_path)?;
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        let line = line?;
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 3 {
+            eprintln!("{}", format!("警告: 无效的 feed 配置行: {}", line).yellow());
+            continue;
+        }
+        let feed_type = parts[0];
+        let feed_name = parts[1];
+        // 第三部分是 url;revision，更新时只关心目录位置
+
+        let feed_dir = Path::new(PACKAGES_DIR).join(feed_name);
+
+        if !feed_dir.exists() {
+            eprintln!(
+                "{}",
+                format!("警告: Feed 目录 '{}' 不存在，跳过更新 (请先运行 owbm package feed)", feed_dir.display()).yellow()
+            );
+            continue;
+        }
+
+        println!("{}", format!("正在更新 feed: {}", feed_name).cyan());
+
+        let status = match feed_type {
+            "src-git" => {
+                process::Command::new("git")
+                    .arg("-C")
+                    .arg(&feed_dir)
+                    .arg("pull")
+                    .status()?
+            }
+            "src-svn" => {
+                process::Command::new("svn")
+                    .arg("update")
+                    .arg(&feed_dir)
+                    .status()?
+            }
+            _ => {
+                eprintln!("{}", format!("不支持 feed 类型: {}", feed_type).yellow());
+                continue;
+            }
+        };
+
+        if !status.success() {
+            eprintln!("{}", format!("更新 feed {} 失败", feed_name).red());
+        } else {
+            println!("{}", format!("更新 feed {} 完成", feed_name).green());
         }
     }
 
