@@ -418,7 +418,7 @@ fn target_init() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// target update 命令：执行 git pull 拉取当前分支最新代码
+/// target update 命令：执行 git pull 拉取当前分支最新代码，失败时提供处理选项
 fn target_update() -> Result<(), Box<dyn std::error::Error>> {
     let target = get_current_target()?;
     println!("{}", format!("当前目标: {}", target).cyan());
@@ -433,19 +433,121 @@ fn target_update() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("{}", format!("正在更新 {} 的源码...", target).cyan());
-    
-    // 直接执行 git pull --ff-only (仅快进合并，避免意外冲突)
+
+    // 获取当前分支名，以便后续操作
+    let output = process::Command::new("git")
+        .arg("-C")
+        .arg(&src_dir)
+        .arg("rev-parse")
+        .arg("--abbrev-ref")
+        .arg("HEAD")
+        .output()?;
+    if !output.status.success() {
+        return Err("无法获取当前分支名".into());
+    }
+    let current_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // 首先尝试快进合并（ff-only）
     let status = process::Command::new("git")
         .arg("-C")
         .arg(&src_dir)
         .arg("pull")
         .arg("--ff-only")
         .status()?;
-    if !status.success() {
-        return Err("git pull 失败".into());
+
+    if status.success() {
+        println!("{}", "源码更新完成。".green());
+        return Ok(());
     }
 
-    println!("{}", "源码更新完成。".green());
+    // pull 失败，提供选项
+    println!("{}", "git pull 失败，可能因为本地有未提交的更改或存在冲突。".yellow());
+    let items = vec![
+        "储藏本地更改后重试 (git stash + pull)",
+        "强制拉取并丢弃本地更改 (git reset --hard)",
+        "取消更新",
+    ];
+    let selection = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("请选择处理方式")
+        .items(&items)
+        .default(0)
+        .interact()?;
+
+    match selection {
+        0 => {
+            // 储藏本地更改
+            println!("{}", "正在储藏本地更改...".cyan());
+            let stash_status = process::Command::new("git")
+                .arg("-C")
+                .arg(&src_dir)
+                .arg("stash")
+                .status()?;
+            if !stash_status.success() {
+                return Err("git stash 失败".into());
+            }
+
+            // 再次尝试 pull
+            println!("{}", "正在重新拉取...".cyan());
+            let pull_status = process::Command::new("git")
+                .arg("-C")
+                .arg(&src_dir)
+                .arg("pull")
+                .arg("--ff-only")
+                .status()?;
+            if !pull_status.success() {
+                return Err("储藏后 git pull 仍然失败".into());
+            }
+
+            // 询问是否弹出储藏
+            let pop_stash = Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt("拉取成功。是否恢复之前储藏的本地更改？")
+                .default(true)
+                .interact()?;
+            if pop_stash {
+                let pop_status = process::Command::new("git")
+                    .arg("-C")
+                    .arg(&src_dir)
+                    .arg("stash")
+                    .arg("pop")
+                    .status()?;
+                if !pop_status.success() {
+                    println!("{}", "警告: git stash pop 失败，可能存在冲突，请手动处理。".yellow());
+                }
+            }
+            println!("{}", "源码更新完成。".green());
+        }
+        1 => {
+            // 强制拉取：fetch 然后 reset --hard
+            println!("{}", "正在强制拉取（将丢弃所有本地更改）...".yellow());
+            let fetch_status = process::Command::new("git")
+                .arg("-C")
+                .arg(&src_dir)
+                .arg("fetch")
+                .arg("origin")
+                .status()?;
+            if !fetch_status.success() {
+                return Err("git fetch origin 失败".into());
+            }
+
+            let reset_status = process::Command::new("git")
+                .arg("-C")
+                .arg(&src_dir)
+                .arg("reset")
+                .arg("--hard")
+                .arg(format!("origin/{}", current_branch))
+                .status()?;
+            if !reset_status.success() {
+                return Err(format!("git reset --hard origin/{} 失败", current_branch).into());
+            }
+            println!("{}", "强制拉取完成。".green());
+        }
+        2 => {
+            println!("{}", "已取消更新。".yellow());
+            return Ok(());
+        }
+        _ => unreachable!(),
+    }
+
     Ok(())
 }
 
