@@ -436,36 +436,68 @@ fn target_update() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("{}", format!("正在更新 {} 的源码...", target).cyan());
+    
+    // 1. 拉取远程更新
     let status = process::Command::new("git")
         .arg("-C")
         .arg(&src_dir)
         .arg("fetch")
+        .arg("origin")
         .status()?;
     if !status.success() {
         return Err("git fetch 失败".into());
     }
 
-    let status = process::Command::new("git")
+    // 2. 尝试直接 checkout
+    let checkout_status = process::Command::new("git")
         .arg("-C")
         .arg(&src_dir)
         .arg("checkout")
         .arg(&revision)
-        .status()?;
-    if !status.success() {
-        return Err(format!("git checkout {} 失败", revision).into());
+        .status();
+
+    let checkout_success = match checkout_status {
+        Ok(s) => s.success(),
+        Err(_) => false,
+    };
+
+    if !checkout_success {
+        // 如果不是纯 commit hash，尝试作为远程分支处理
+        let is_commit_hash = revision.len() == 40 && revision.chars().all(|c| c.is_ascii_hexdigit());
+        if !is_commit_hash {
+            println!("{}", format!("直接检出失败，尝试从远程分支 origin/{} 创建本地分支...", revision).yellow());
+            let branch_status = process::Command::new("git")
+                .arg("-C")
+                .arg(&src_dir)
+                .arg("checkout")
+                .arg("-B")
+                .arg(&revision)
+                .arg(format!("origin/{}", revision))
+                .status()?;
+            if !branch_status.success() {
+                return Err(format!("无法切换到分支 '{}'，请检查远程是否存在该分支", revision).into());
+            }
+            println!("{}", format!("已切换到分支 {}", revision).green());
+        } else {
+            return Err(format!("无法切换到 commit {}", revision).into());
+        }
+    } else {
+        println!("{}", format!("已切换到 {}", revision).green());
     }
 
-    if revision.len() != 40 || revision.chars().any(|c| !c.is_ascii_hexdigit()) {
+    // 3. 如果是分支名（非 commit hash），则执行 pull 拉取最新
+    let is_commit_hash = revision.len() == 40 && revision.chars().all(|c| c.is_ascii_hexdigit());
+    if !is_commit_hash {
         let status = process::Command::new("git")
             .arg("-C")
             .arg(&src_dir)
             .arg("pull")
+            .arg("--ff-only")
             .status()?;
         if !status.success() {
             return Err("git pull 失败".into());
         }
-    } else {
-        println!("{}", format!("已切换到 commit {}", revision).green());
+        println!("{}", "已拉取分支最新提交".green());
     }
 
     println!("{}", "源码更新完成。".green());
@@ -1015,7 +1047,7 @@ fn parse_src_value(value: &str) -> Result<(String, String), Box<dyn std::error::
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
-/// 下载源码到 srcs/<target> (浅克隆)
+/// 下载源码到 srcs/<target> (浅克隆，并支持任意 revision)
 fn download_source(target: &str, config: &SourceConfig) -> Result<(), Box<dyn std::error::Error>> {
     let src_dir = Path::new(SRCS_DIR).join(target);
     if src_dir.exists() {
@@ -1039,6 +1071,7 @@ fn download_source(target: &str, config: &SourceConfig) -> Result<(), Box<dyn st
         }
     }
 
+    // 1. 浅克隆默认分支（不指定 --branch，以获取仓库默认分支）
     println!(
         "{}",
         format!("正在浅克隆 {} 到 {}...", config.url, src_dir.display()).cyan()
@@ -1054,18 +1087,31 @@ fn download_source(target: &str, config: &SourceConfig) -> Result<(), Box<dyn st
         return Err("git clone 失败".into());
     }
 
+    // 2. 拉取指定的 revision（可以是分支名、tag 或 commit hash）
     println!(
         "{}",
-        format!("正在切换到 revision {}...", config.revision).cyan()
+        format!("正在获取 revision {}...", config.revision).cyan()
     );
     let status = process::Command::new("git")
         .arg("-C")
         .arg(&src_dir)
-        .arg("checkout")
+        .arg("fetch")
+        .arg("origin")
         .arg(&config.revision)
         .status()?;
     if !status.success() {
-        return Err(format!("git checkout {} 失败", config.revision).into());
+        return Err(format!("git fetch origin {} 失败", config.revision).into());
+    }
+
+    // 3. 检出 FETCH_HEAD（即刚刚 fetch 到的 revision）
+    let status = process::Command::new("git")
+        .arg("-C")
+        .arg(&src_dir)
+        .arg("checkout")
+        .arg("FETCH_HEAD")
+        .status()?;
+    if !status.success() {
+        return Err("git checkout FETCH_HEAD 失败".into());
     }
 
     println!("{}", "源码下载完成。".green());
