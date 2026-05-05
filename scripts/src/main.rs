@@ -1066,34 +1066,6 @@ fn get_current_target() -> Result<String, Box<dyn std::error::Error>> {
         .ok_or_else(|| "当前 .config 中未设置 CONFIG_TARGET，请运行 owbm change 选择目标。".into())
 }
 
-/// 从 .config 中读取指定键的值
-fn read_config_value(key: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let config_path = env::current_dir()?.join(CONFIG_FILE);
-    if !config_path.exists() {
-        return Err(format!(".config 文件不存在，无法读取 {}", key).into());
-    }
-    let file = File::open(config_path)?;
-    let reader = BufReader::new(file);
-    for line in reader.lines() {
-        let line = line?;
-        if line.starts_with(key) && line.contains('=') {
-            if let Some(value) = line.split('=').nth(1) {
-                return Ok(value.trim().to_string());
-            }
-        }
-    }
-    Err(format!(".config 中未找到键 {}", key).into())
-}
-
-/// 解析 CONFIG_SRC 的值，格式为 "url;revision"
-fn parse_src_value(value: &str) -> Result<(String, String), Box<dyn std::error::Error>> {
-    let parts: Vec<&str> = value.split(';').collect();
-    if parts.len() != 2 {
-        return Err("CONFIG_SRC 格式错误，应为 url;revision".into());
-    }
-    Ok((parts[0].to_string(), parts[1].to_string()))
-}
-
 /// 下载源码到 srcs/<target> (浅克隆指定分支/标签)
 fn download_source(target: &str, config: &SourceConfig) -> Result<(), Box<dyn std::error::Error>> {
     let src_dir = Path::new(SRCS_DIR).join(target);

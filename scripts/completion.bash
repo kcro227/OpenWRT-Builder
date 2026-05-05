@@ -11,7 +11,7 @@ _owbm_completions() {
             COMPREPLY=($(compgen -W "init update config feed download" -- "$cur"))
             ;;
         package)
-            COMPREPLY=($(compgen -W "feed install" -- "$cur"))
+            COMPREPLY=($(compgen -W "feed install update" -- "$cur"))
             ;;
         custom)
             # 获取当前目标
