@@ -17,3 +17,5 @@ target/
 /targets/*
 !/targets/default/
 !/targets/default/**
+
+backup/
