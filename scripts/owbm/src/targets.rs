@@ -11,6 +11,7 @@ use std::process;
 use crate::app::{CONFIG_FILE, CONFIG_SRC_KEY, CONFIG_TARGET_KEY, SourceConfig, SRCS_DIR, TARGETS_DIR};
 use crate::build::run_make;
 use crate::config::{ensure_dir_exists, get_current_target, read_targets, sync_package_config, update_config};
+use crate::packages::ensure_feed_config_file;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ExportManifest {
@@ -160,10 +161,7 @@ pub fn export_targets(output: &str) -> Result<()> {
     }
     fs::create_dir_all(export_root).context("创建导出目录失败")?;
 
-    let package_src = Path::new("packages").join("feeds.config");
-    if !package_src.exists() {
-        anyhow::bail!("未找到 '{}'，无法导出包源配置", package_src.display());
-    }
+    let package_src = ensure_feed_config_file()?;
 
     let target_root = Path::new(TARGETS_DIR);
     let mut target_names = Vec::new();

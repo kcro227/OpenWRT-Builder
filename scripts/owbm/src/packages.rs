@@ -32,22 +32,29 @@ pub fn parse_requested_packages(args: &[String]) -> Vec<String> {
     result
 }
 
-fn find_feed_config_path() -> Result<PathBuf> {
-    let candidates = [
-        Path::new(PACKAGES_DIR).join("feeds.config"),
-        Path::new(PACKAGES_DIR).join(FEED_CONFIG_FILE),
-    ];
+pub fn ensure_feed_config_file() -> Result<PathBuf> {
+    let preferred = Path::new(PACKAGES_DIR).join("feeds.config");
+    let legacy = Path::new(PACKAGES_DIR).join(FEED_CONFIG_FILE);
 
-    for candidate in candidates {
-        if candidate.exists() {
-            return Ok(candidate);
-        }
+    if preferred.exists() {
+        return Ok(preferred);
+    }
+    if legacy.exists() {
+        return Ok(legacy);
     }
 
-    let fallback = Path::new(PACKAGES_DIR).join(FEED_CONFIG_FILE);
-    anyhow::bail!("未找到 feeds 配置（{} 或 {}），请先创建 feeds 配置。", 
-        Path::new(PACKAGES_DIR).join("feeds.config").display(),
-        fallback.display());
+    if let Some(parent) = preferred.parent() {
+        fs::create_dir_all(parent).context("创建 packages 目录失败")?;
+    }
+
+    let template = "# 格式说明\n# src-git <名称> <仓库URL>;<分支>\n#\n# 示例：\n# src-git luci-app-alist https://github.com/sbwml/luci-app-alist.git;lua\n";
+    fs::write(&preferred, template).context("创建 feeds.config 模板失败")?;
+    println!("{}", format!("未检测到 {}，已自动创建默认 feeds.config 模板。", preferred.display()).green());
+    Ok(preferred)
+}
+
+fn find_feed_config_path() -> Result<PathBuf> {
+    ensure_feed_config_file()
 }
 
 pub fn parse_feed_entries() -> Result<Vec<FeedEntry>> {
