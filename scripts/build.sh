@@ -19,7 +19,7 @@ case "$MODE" in
         ;;
     clean)
         rm -rf "$RUST_SRC_DIR/target"
-        echo "已清理构建产物：$RUST_SRC_DIR/target
+        echo "已清理构建产物：$RUST_SRC_DIR/target"
         exit 0
         ;;
     *)
