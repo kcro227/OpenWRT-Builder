@@ -2,6 +2,7 @@ use clap::{Args, Parser, Subcommand};
 use colored::*;
 use serde::{Deserialize, Serialize};
 use std::process;
+use anyhow::Result;
 
 pub const TARGETS_DIR: &str = "targets";
 pub const SRCS_DIR: &str = "srcs";
@@ -29,13 +30,15 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     List,
-    Change,
+    #[command(alias = "change")]
+    Select,
     Target(TargetArgs),
     Package(PackageArgs),
     Sync,
     Build(BuildArgs),
     Custom(CustomArgs),
-    Command(CommandArgs),
+    #[command(visible_alias = "exec", alias = "command")]
+    Run(CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -107,9 +110,10 @@ struct CommandArgs {
     cmd: String,
 }
 
-fn exit_on_error<T>(result: Result<T, Box<dyn std::error::Error>>) {
+fn exit_on_error<T>(result: Result<T>) {
     if let Err(err) = result {
-        eprintln!("{}", format!("错误: {}", err).red());
+        // print error with its chain for better diagnostics
+        eprintln!("{}", format!("错误: {:#}", err).red());
         process::exit(1);
     }
 }
@@ -130,7 +134,7 @@ pub fn run() {
 
     match cli.command {
         Command::List => exit_on_error(crate::targets::list_targets(TARGETS_DIR)),
-        Command::Change => exit_on_error(crate::config::change_target(TARGETS_DIR)),
+        Command::Select => exit_on_error(crate::config::change_target(TARGETS_DIR)),
         Command::Target(args) => match args.action {
             TargetAction::Init => exit_on_error(crate::targets::target_init()),
             TargetAction::Update => exit_on_error(crate::targets::target_update()),
@@ -148,6 +152,6 @@ pub fn run() {
         Command::Sync => exit_on_error(crate::targets::config_sync()),
         Command::Build(_) => exit_on_error(crate::build::build()),
         Command::Custom(args) => exit_on_error(crate::build::run_custom_script(&args.name, &args.extra_args)),
-        Command::Command(args) => exit_on_error(crate::build::run_command(&args.cmd)),
+        Command::Run(args) => exit_on_error(crate::build::run_command(&args.cmd)),
     }
 }

@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use colored::*;
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
 use std::env;
@@ -9,7 +10,7 @@ use crate::app::{CONFIG_SRC_KEY, SourceConfig, SRCS_DIR, TARGETS_DIR};
 use crate::build::run_make;
 use crate::config::{ensure_dir_exists, get_current_target, read_targets, sync_package_config, update_config};
 
-pub fn list_targets<P: AsRef<Path>>(path: P) -> Result<(), Box<dyn std::error::Error>> {
+pub fn list_targets<P: AsRef<Path>>(path: P) -> Result<()> {
     let path = path.as_ref();
     ensure_dir_exists(path)?;
 
@@ -25,27 +26,27 @@ pub fn list_targets<P: AsRef<Path>>(path: P) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-pub fn target_init() -> Result<(), Box<dyn std::error::Error>> {
+pub fn target_init() -> Result<()> {
     let target = get_current_target()?;
     println!("{}", format!("当前目标: {}", target).cyan());
 
     let target_dir = Path::new(TARGETS_DIR).join(&target);
     if !target_dir.exists() {
-        return Err(format!("目标目录 '{}' 不存在", target_dir.display()).into());
+        anyhow::bail!("目标目录 '{}' 不存在", target_dir.display());
     }
 
     let source_json_path = target_dir.join("source.json");
     let source_config: SourceConfig = if source_json_path.exists() {
-        let content = fs::read_to_string(&source_json_path)?;
-        serde_json::from_str(&content)?
+        let content = fs::read_to_string(&source_json_path).context("读取 source.json 失败")?;
+        serde_json::from_str(&content).context("解析 source.json 失败")?
     } else {
         println!("{}", "source.json 不存在，正在创建模板...".yellow());
         let template = SourceConfig {
             url: "https://github.com/example/repo.git".to_string(),
             revision: "main".to_string(),
         };
-        let template_content = serde_json::to_string_pretty(&template)?;
-        fs::write(&source_json_path, &template_content)?;
+        let template_content = serde_json::to_string_pretty(&template).context("序列化 source.json 模板失败")?;
+        fs::write(&source_json_path, &template_content).context("写入 source.json 失败")?;
         println!("{}", format!("模板已创建: {}", source_json_path.display()).green());
         println!("{}", "请编辑该文件，填入正确的 URL 和 revision，然后再次运行 owbm target init".cyan());
         return Ok(());
@@ -60,13 +61,13 @@ pub fn target_init() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn target_update() -> Result<(), Box<dyn std::error::Error>> {
+pub fn target_update() -> Result<()> {
     let target = get_current_target()?;
     println!("{}", format!("当前目标: {}", target).cyan());
 
     let src_dir = Path::new(SRCS_DIR).join(&target);
     if !src_dir.exists() {
-        return Err(format!("源码目录 '{}' 不存在，请先运行 owbm target init", src_dir.display()).into());
+        anyhow::bail!("源码目录 '{}' 不存在，请先运行 owbm target init", src_dir.display());
     }
 
     println!("{}", format!("正在更新 {} 的源码...", target).cyan());
@@ -77,9 +78,10 @@ pub fn target_update() -> Result<(), Box<dyn std::error::Error>> {
         .arg("rev-parse")
         .arg("--abbrev-ref")
         .arg("HEAD")
-        .output()?;
+        .output()
+        .context("获取 git 当前分支名失败")?;
     if !output.status.success() {
-        return Err("无法获取当前分支名".into());
+        anyhow::bail!("无法获取当前分支名: git rev-parse 返回非零状态");
     }
     let current_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
@@ -88,7 +90,8 @@ pub fn target_update() -> Result<(), Box<dyn std::error::Error>> {
         .arg(&src_dir)
         .arg("pull")
         .arg("--ff-only")
-        .status()?;
+        .status()
+        .context("执行 git pull 失败")?;
 
     if status.success() {
         println!("{}", "源码更新完成。".green());
@@ -105,7 +108,8 @@ pub fn target_update() -> Result<(), Box<dyn std::error::Error>> {
         .with_prompt("请选择处理方式")
         .items(&items)
         .default(0)
-        .interact()?;
+        .interact()
+        .context("交互式选择失败")?;
 
     match selection {
         0 => {
@@ -114,9 +118,10 @@ pub fn target_update() -> Result<(), Box<dyn std::error::Error>> {
                 .arg("-C")
                 .arg(&src_dir)
                 .arg("stash")
-                .status()?;
+                .status()
+                .context("git stash 执行失败")?;
             if !stash_status.success() {
-                return Err("git stash 失败".into());
+                anyhow::bail!("git stash 失败");
             }
 
             println!("{}", "正在重新拉取...".cyan());
@@ -125,22 +130,25 @@ pub fn target_update() -> Result<(), Box<dyn std::error::Error>> {
                 .arg(&src_dir)
                 .arg("pull")
                 .arg("--ff-only")
-                .status()?;
+                .status()
+                .context("git pull 执行失败")?;
             if !pull_status.success() {
-                return Err("储藏后 git pull 仍然失败".into());
+                anyhow::bail!("储藏后 git pull 仍然失败");
             }
 
             let pop_stash = Confirm::with_theme(&ColorfulTheme::default())
                 .with_prompt("拉取成功。是否恢复之前储藏的本地更改？")
                 .default(true)
-                .interact()?;
+                .interact()
+                .context("交互式选择失败")?;
             if pop_stash {
                 let pop_status = process::Command::new("git")
                     .arg("-C")
                     .arg(&src_dir)
                     .arg("stash")
                     .arg("pop")
-                    .status()?;
+                    .status()
+                    .context("git stash pop 执行失败")?;
                 if !pop_status.success() {
                     println!("{}", "警告: git stash pop 失败，可能存在冲突，请手动处理。".yellow());
                 }
@@ -154,9 +162,10 @@ pub fn target_update() -> Result<(), Box<dyn std::error::Error>> {
                 .arg(&src_dir)
                 .arg("fetch")
                 .arg("origin")
-                .status()?;
+                .status()
+                .context("git fetch origin 执行失败")?;
             if !fetch_status.success() {
-                return Err("git fetch origin 失败".into());
+                anyhow::bail!("git fetch origin 失败");
             }
 
             let reset_status = process::Command::new("git")
@@ -165,9 +174,10 @@ pub fn target_update() -> Result<(), Box<dyn std::error::Error>> {
                 .arg("reset")
                 .arg("--hard")
                 .arg(format!("origin/{}", current_branch))
-                .status()?;
+                .status()
+                .context("git reset --hard 执行失败")?;
             if !reset_status.success() {
-                return Err(format!("git reset --hard origin/{} 失败", current_branch).into());
+                anyhow::bail!("git reset --hard origin/{} 失败", current_branch);
             }
             println!("{}", "强制拉取完成。".green());
         }
@@ -181,7 +191,7 @@ pub fn target_update() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn target_config() -> Result<(), Box<dyn std::error::Error>> {
+pub fn target_config() -> Result<()> {
     let target = get_current_target()?;
     let args: Vec<String> = env::args().collect();
     let extra_args: Vec<String> = args.iter().skip(3).cloned().collect();
@@ -191,7 +201,7 @@ pub fn target_config() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn target_download() -> Result<(), Box<dyn std::error::Error>> {
+pub fn target_download() -> Result<()> {
     let target = get_current_target()?;
     let args: Vec<String> = env::args().collect();
     let extra_args: Vec<String> = args.iter().skip(3).cloned().collect();
@@ -201,7 +211,7 @@ pub fn target_download() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn target_clean() -> Result<(), Box<dyn std::error::Error>> {
+pub fn target_clean() -> Result<()> {
     let target = get_current_target()?;
     let args: Vec<String> = env::args().collect();
     let extra_args: Vec<String> = args.iter().skip(3).cloned().collect();
@@ -211,7 +221,7 @@ pub fn target_clean() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn target_distclean() -> Result<(), Box<dyn std::error::Error>> {
+pub fn target_distclean() -> Result<()> {
     let target = get_current_target()?;
     let args: Vec<String> = env::args().collect();
     let extra_args: Vec<String> = args.iter().skip(3).cloned().collect();
@@ -221,11 +231,11 @@ pub fn target_distclean() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn target_feed() -> Result<(), Box<dyn std::error::Error>> {
+pub fn target_feed() -> Result<()> {
     crate::build::target_feed()
 }
 
-pub fn download_source(target: &str, config: &SourceConfig) -> Result<(), Box<dyn std::error::Error>> {
+pub fn download_source(target: &str, config: &SourceConfig) -> Result<()> {
     let src_dir = Path::new(SRCS_DIR).join(target);
     if src_dir.exists() {
         let confirm = Confirm::with_theme(&ColorfulTheme::default())
@@ -259,14 +269,14 @@ pub fn download_source(target: &str, config: &SourceConfig) -> Result<(), Box<dy
         .arg(&src_dir)
         .status()?;
     if !status.success() {
-        return Err(format!("git clone --branch {} 失败", config.revision).into());
+        anyhow::bail!("git clone --branch {} 失败", config.revision);
     }
 
     println!("{}", "源码下载完成。".green());
     Ok(())
 }
 
-pub fn config_sync() -> Result<(), Box<dyn std::error::Error>> {
+pub fn config_sync() -> Result<()> {
     let target = get_current_target()?;
     println!("{}", format!("同步目标 {} 的配置...", target).cyan());
     sync_package_config(&target)?;

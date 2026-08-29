@@ -1,3 +1,4 @@
+use anyhow::{Result, Context};
 use colored::*;
 use dialoguer::{Select, theme::ColorfulTheme};
 use std::collections::HashSet;
@@ -8,18 +9,18 @@ use std::path::Path;
 
 use crate::app::{CONFIG_FILE, CONFIG_TARGET_KEY, TARGETS_DIR};
 
-pub fn sync_package_config(target: &str) -> Result<usize, Box<dyn std::error::Error>> {
+pub fn sync_package_config(target: &str) -> Result<usize> {
     let packagelist_path = Path::new(TARGETS_DIR).join(target).join("packagelist.txt");
     if !packagelist_path.exists() {
         println!("{}", format!("目标 '{}' 没有 packagelist.txt，跳过软件包同步。", target).yellow());
         return Ok(0);
     }
 
-    let file = File::open(&packagelist_path)?;
+    let file = File::open(&packagelist_path).context("打开 packagelist.txt 失败")?;
     let reader = BufReader::new(file);
     let mut expected = HashSet::new();
     for line in reader.lines() {
-        let line = line?;
+        let line = line.context("读取 packagelist.txt 时发生 I/O 错误")?;
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -27,11 +28,11 @@ pub fn sync_package_config(target: &str) -> Result<usize, Box<dyn std::error::Er
         expected.insert(line.to_string());
     }
 
-    let config_path = env::current_dir()?.join(CONFIG_FILE);
+    let config_path = env::current_dir().context("无法获取当前工作目录")?.join(CONFIG_FILE);
     let mut lines = Vec::new();
     let mut current = HashSet::new();
     if config_path.exists() {
-        let content = fs::read_to_string(&config_path)?;
+        let content = fs::read_to_string(&config_path).context("读取 .config 失败")?;
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("CONFIG_PACKAGE_") && trimmed.ends_with("=y") {
@@ -88,24 +89,24 @@ pub fn sync_package_config(target: &str) -> Result<usize, Box<dyn std::error::Er
         new_lines.push(format!("CONFIG_PACKAGE_{}=y", pkg));
     }
 
-    let mut file = File::create(config_path)?;
+    let mut file = File::create(config_path).context("写入 .config 失败")?;
     for line in new_lines {
-        writeln!(file, "{}", line)?;
+        writeln!(file, "{}", line).context("写入 .config 失败")?;
     }
 
     Ok(to_add.len())
 }
 
-pub fn change_target<P: AsRef<Path>>(path: P) -> Result<(), Box<dyn std::error::Error>> {
+pub fn change_target<P: AsRef<Path>>(path: P) -> Result<()> {
     let path = path.as_ref();
     ensure_dir_exists(path)?;
 
     let targets = read_targets(path)?;
     if targets.is_empty() {
-        return Err("没有可用的目标，无法选择。".into());
+        anyhow::bail!("没有可用的目标，无法选择。");
     }
 
-    let current_dir = env::current_dir()?;
+    let current_dir = env::current_dir().context("无法获取当前工作目录")?;
     let config_path = current_dir.join(CONFIG_FILE);
     let current_target = read_current_target(&config_path)?;
 
@@ -121,7 +122,8 @@ pub fn change_target<P: AsRef<Path>>(path: P) -> Result<(), Box<dyn std::error::
         ))
         .default(default_index)
         .items(&targets)
-        .interact()?;
+        .interact()
+        .context("交互式选择目标失败")?;
 
     let selected = &targets[selection];
     update_config(CONFIG_TARGET_KEY, selected)?;
@@ -131,23 +133,23 @@ pub fn change_target<P: AsRef<Path>>(path: P) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-pub fn get_current_target() -> Result<String, Box<dyn std::error::Error>> {
-    let config_path = env::current_dir()?.join(CONFIG_FILE);
+pub fn get_current_target() -> Result<String> {
+    let config_path = env::current_dir().context("无法获取当前工作目录")?.join(CONFIG_FILE);
     if !config_path.exists() {
-        return Err("没有找到 .config 文件，请先运行 owbm change 选择目标。".into());
+        anyhow::bail!("没有找到 .config 文件，请先运行 owbm change 选择目标。");
     }
     let target = read_current_target(&config_path)?;
-    target.ok_or_else(|| "当前 .config 中未设置 CONFIG_TARGET，请运行 owbm change 选择目标。".into())
+    Ok(target.ok_or_else(|| anyhow::anyhow!("当前 .config 中未设置 CONFIG_TARGET，请运行 owbm change 选择目标。"))?)
 }
 
-pub fn read_current_target(config_path: &Path) -> Result<Option<String>, Box<dyn std::error::Error>> {
+pub fn read_current_target(config_path: &Path) -> Result<Option<String>> {
     if !config_path.exists() {
         return Ok(None);
     }
-    let file = File::open(config_path)?;
+    let file = File::open(config_path).context("打开 .config 失败")?;
     let reader = BufReader::new(file);
     for line in reader.lines() {
-        let line = line?;
+        let line = line.context("读取 .config 时发生 I/O 错误")?;
         if line.starts_with(CONFIG_TARGET_KEY) && line.contains('=') {
             if let Some(value) = line.split('=').nth(1) {
                 return Ok(Some(value.trim().to_string()));
@@ -157,16 +159,16 @@ pub fn read_current_target(config_path: &Path) -> Result<Option<String>, Box<dyn
     Ok(None)
 }
 
-pub fn update_config(key: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let config_path = env::current_dir()?.join(CONFIG_FILE);
+pub fn update_config(key: &str, value: &str) -> Result<()> {
+    let config_path = env::current_dir().context("无法获取当前工作目录")?.join(CONFIG_FILE);
     let new_line = format!("{}={}", key, value);
 
     if !config_path.exists() {
-        fs::write(&config_path, new_line + "\n")?;
+        fs::write(&config_path, new_line + "\n").context("写入 .config 失败")?;
         return Ok(());
     }
 
-    let content = fs::read_to_string(&config_path)?;
+    let content = fs::read_to_string(&config_path).context("读取 .config 失败")?;
     let mut lines: Vec<String> = content.lines().map(String::from).collect();
     let mut found = false;
 
@@ -182,30 +184,30 @@ pub fn update_config(key: &str, value: &str) -> Result<(), Box<dyn std::error::E
         lines.push(new_line);
     }
 
-    let mut file = File::create(config_path)?;
+    let mut file = File::create(config_path).context("写入 .config 失败")?;
     for line in lines {
-        writeln!(file, "{}", line)?;
+        writeln!(file, "{}", line).context("写入 .config 失败")?;
     }
     Ok(())
 }
 
-pub fn ensure_dir_exists(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn ensure_dir_exists(path: &Path) -> Result<()> {
     if !path.exists() {
-        return Err(format!("目录 '{}' 不存在", path.display()).into());
+        anyhow::bail!(format!("目录 '{}' 不存在", path.display()));
     }
     if !path.is_dir() {
-        return Err(format!("'{}' 不是一个目录", path.display()).into());
+        anyhow::bail!(format!("'{}' 不是一个目录", path.display()));
     }
     Ok(())
 }
 
-pub fn read_targets(path: &Path) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let entries = fs::read_dir(path)?;
+pub fn read_targets(path: &Path) -> Result<Vec<String>> {
+    let entries = fs::read_dir(path).context("读取目标目录失败")?;
     let mut targets = Vec::new();
 
     for entry in entries {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
+        let entry = entry.context("遍历目标目录时发生 I/O 错误")?;
+        let file_type = entry.file_type().context("读取目录项类型失败")?;
         if file_type.is_dir() {
             if let Some(name) = entry.file_name().to_str() {
                 targets.push(name.to_string());

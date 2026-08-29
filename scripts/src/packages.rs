@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use colored::*;
 use dialoguer::{Confirm, theme::ColorfulTheme};
 use std::fs;
@@ -31,18 +32,18 @@ pub fn parse_requested_packages(args: &[String]) -> Vec<String> {
     result
 }
 
-pub fn parse_feed_entries() -> Result<Vec<FeedEntry>, Box<dyn std::error::Error>> {
+pub fn parse_feed_entries() -> Result<Vec<FeedEntry>> {
     let feed_config_path = Path::new(PACKAGES_DIR).join(FEED_CONFIG_FILE);
     if !feed_config_path.exists() {
-        return Err(format!("未找到 {}，请先创建 feeds 配置。", feed_config_path.display()).into());
+        anyhow::bail!("未找到 {}，请先创建 feeds 配置。", feed_config_path.display());
     }
 
-    let file = File::open(&feed_config_path)?;
+    let file = File::open(&feed_config_path).context("打开 feeds 配置失败")?;
     let reader = BufReader::new(file);
     let mut entries = Vec::new();
 
     for line in reader.lines() {
-        let line = line?;
+        let line = line.context("读取 feeds 配置时发生 I/O 错误")?;
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -81,14 +82,15 @@ pub fn parse_feed_entries() -> Result<Vec<FeedEntry>, Box<dyn std::error::Error>
     Ok(entries)
 }
 
-fn git_remote_url(repo_dir: &Path) -> Result<Option<String>, Box<dyn std::error::Error>> {
+fn git_remote_url(repo_dir: &Path) -> Result<Option<String>> {
     let output = process::Command::new("git")
         .arg("-C")
         .arg(repo_dir)
         .arg("remote")
         .arg("get-url")
         .arg("origin")
-        .output()?;
+        .output()
+        .context("执行 git remote get-url 失败")?;
 
     if !output.status.success() {
         return Ok(None);
@@ -102,7 +104,7 @@ fn git_remote_url(repo_dir: &Path) -> Result<Option<String>, Box<dyn std::error:
     Ok(Some(url))
 }
 
-fn ensure_git_remote_matches(repo_dir: &Path, expected_url: &str) -> Result<bool, Box<dyn std::error::Error>> {
+fn ensure_git_remote_matches(repo_dir: &Path, expected_url: &str) -> Result<bool> {
     let current = git_remote_url(repo_dir)?;
     if let Some(current_url) = current {
         if current_url == expected_url {
@@ -124,9 +126,10 @@ fn ensure_git_remote_matches(repo_dir: &Path, expected_url: &str) -> Result<bool
             .arg("set-url")
             .arg("origin")
             .arg(expected_url)
-            .status()?;
+            .status()
+            .context("git remote set-url 执行失败")?;
         if !status.success() {
-            return Err(format!("更新 feed 远程地址失败: {}", repo_dir.display()).into());
+            anyhow::bail!("更新 feed 远程地址失败: {}", repo_dir.display());
         }
         return Ok(true);
     }
@@ -138,14 +141,15 @@ fn ensure_git_remote_matches(repo_dir: &Path, expected_url: &str) -> Result<bool
         .arg("add")
         .arg("origin")
         .arg(expected_url)
-        .status()?;
+        .status()
+        .context("git remote add 执行失败")?;
     if !status.success() {
-        return Err(format!("添加 feed 远程地址失败: {}", repo_dir.display()).into());
+        anyhow::bail!("添加 feed 远程地址失败: {}", repo_dir.display());
     }
     Ok(true)
 }
 
-fn detect_remote_branch(repo_dir: &Path, revision: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
+fn detect_remote_branch(repo_dir: &Path, revision: Option<&str>) -> Result<String> {
     if let Some(rev) = revision {
         return Ok(rev.to_string());
     }
@@ -156,7 +160,8 @@ fn detect_remote_branch(repo_dir: &Path, revision: Option<&str>) -> Result<Strin
         .arg("symbolic-ref")
         .arg("--short")
         .arg("refs/remotes/origin/HEAD")
-        .output()?;
+        .output()
+        .context("检测远程 HEAD 分支失败")?;
     if symbolic.status.success() {
         let value = String::from_utf8_lossy(&symbolic.stdout).trim().to_string();
         if !value.is_empty() {
@@ -173,7 +178,8 @@ fn detect_remote_branch(repo_dir: &Path, revision: Option<&str>) -> Result<Strin
         .arg("remote")
         .arg("show")
         .arg("origin")
-        .output()?;
+        .output()
+        .context("git remote show origin 失败")?;
     if show.status.success() {
         let text = String::from_utf8_lossy(&show.stdout);
         for line in text.lines() {
@@ -193,7 +199,8 @@ fn detect_remote_branch(repo_dir: &Path, revision: Option<&str>) -> Result<Strin
         .arg("for-each-ref")
         .arg("--format=%(refname:short)")
         .arg("refs/remotes/origin")
-        .output()?;
+        .output()
+        .context("列出远程引用失败")?;
     if branch_output.status.success() {
         let text = String::from_utf8_lossy(&branch_output.stdout);
         for line in text.lines() {
@@ -212,7 +219,7 @@ fn detect_remote_branch(repo_dir: &Path, revision: Option<&str>) -> Result<Strin
     Ok("main".to_string())
 }
 
-fn refresh_git_feed(repo_dir: &Path, expected_url: &str, revision: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+fn refresh_git_feed(repo_dir: &Path, expected_url: &str, revision: Option<&str>) -> Result<()> {
     let branch = detect_remote_branch(repo_dir, revision)?;
 
     let fetch_status = process::Command::new("git")
@@ -221,9 +228,10 @@ fn refresh_git_feed(repo_dir: &Path, expected_url: &str, revision: Option<&str>)
         .arg("fetch")
         .arg("origin")
         .arg("--prune")
-        .status()?;
+        .status()
+        .context("git fetch origin 执行失败")?;
     if !fetch_status.success() {
-        return Err(format!("git fetch origin 失败: {}", repo_dir.display()).into());
+        anyhow::bail!("git fetch origin 失败: {}", repo_dir.display());
     }
 
     let reset_target = format!("origin/{}", branch);
@@ -233,7 +241,8 @@ fn refresh_git_feed(repo_dir: &Path, expected_url: &str, revision: Option<&str>)
         .arg("reset")
         .arg("--hard")
         .arg(&reset_target)
-        .status()?;
+        .status()
+        .context("git reset --hard 执行失败")?;
 
     if !reset_status.success() {
         println!(
@@ -253,9 +262,9 @@ fn refresh_git_feed(repo_dir: &Path, expected_url: &str, revision: Option<&str>)
             clone_cmd.arg("--branch").arg(rev);
         }
         clone_cmd.arg(expected_url).arg(repo_dir);
-        let clone_status = clone_cmd.status()?;
+        let clone_status = clone_cmd.status().context("git clone 执行失败")?;
         if !clone_status.success() {
-            return Err(format!("重新拉取 feed 失败: {}", repo_dir.display()).into());
+            anyhow::bail!("重新拉取 feed 失败: {}", repo_dir.display());
         }
         return Ok(());
     }
@@ -263,7 +272,7 @@ fn refresh_git_feed(repo_dir: &Path, expected_url: &str, revision: Option<&str>)
     Ok(())
 }
 
-pub fn package_feed() -> Result<(), Box<dyn std::error::Error>> {
+pub fn package_feed() -> Result<()> {
     let entries = parse_feed_entries()?;
     let args: Vec<String> = std::env::args().collect();
     let selected = parse_requested_packages(&args[3..]);
@@ -366,7 +375,7 @@ pub fn package_feed() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn package_update() -> Result<(), Box<dyn std::error::Error>> {
+pub fn package_update() -> Result<()> {
     let entries = parse_feed_entries()?;
     let args: Vec<String> = std::env::args().collect();
     let selected = parse_requested_packages(&args[3..]);
@@ -423,34 +432,33 @@ pub fn package_update() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn package_install() -> Result<(), Box<dyn std::error::Error>> {
+pub fn package_install() -> Result<()> {
     let target = get_current_target()?;
     let target_src_dir = Path::new(crate::app::SRCS_DIR).join(&target);
     if !target_src_dir.exists() {
-        return Err(format!(
+        anyhow::bail!(
             "目标源码目录 '{}' 不存在，请先运行 owbm target init",
             target_src_dir.display()
-        )
-        .into());
+        );
     }
 
     let custom_dir = target_src_dir.join("package").join("custom");
-    fs::create_dir_all(&custom_dir)?;
+    fs::create_dir_all(&custom_dir).context("创建自定义包目录失败")?;
 
     let args: Vec<String> = std::env::args().collect();
     let requested = parse_requested_packages(&args[3..]);
 
-    let config_path = std::env::current_dir()?.join(CONFIG_FILE);
+    let config_path = std::env::current_dir().context("无法获取当前工作目录")?.join(CONFIG_FILE);
     if !config_path.exists() {
-        return Err(".config 文件不存在，请先运行 owbm change 选择目标。".into());
+        anyhow::bail!(".config 文件不存在，请先运行 owbm change 选择目标。");
     }
 
-    let file = File::open(config_path)?;
+    let file = File::open(config_path).context("打开 .config 失败")?;
     let reader = BufReader::new(file);
     let mut selected_packages = Vec::new();
 
     for line in reader.lines() {
-        let line = line?;
+        let line = line.context("读取 .config 时发生 I/O 错误")?;
         let line = line.trim();
         if line.starts_with("CONFIG_PACKAGE_") && line.ends_with("=y") {
             if let Some(pkg_name) = line
@@ -464,8 +472,7 @@ pub fn package_install() -> Result<(), Box<dyn std::error::Error>> {
 
     if !requested.is_empty() {
         selected_packages.retain(|pkg| {
-            requested.iter().any(|name| {
-                pkg == name
+            requested.iter().any(|name| {                pkg == name
                     || pkg.ends_with(&format!("/{}", name))
                     || name.ends_with(&format!("/{}", pkg))
                     || Path::new(pkg)
@@ -523,7 +530,7 @@ pub fn package_install() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn find_package_dir(package_name: &str) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+pub fn find_package_dir(package_name: &str) -> Result<Option<PathBuf>> {
     let packages_dir = Path::new(PACKAGES_DIR);
     if !packages_dir.exists() {
         return Ok(None);
@@ -579,16 +586,16 @@ pub fn find_package_dir(package_name: &str) -> Result<Option<PathBuf>, Box<dyn s
     Ok(Some(matches[0].2.clone()))
 }
 
-pub fn copy_dir(src: &Path, dst: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    fs::create_dir_all(dst)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
+pub fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
+    fs::create_dir_all(dst).context("创建目标目录失败")?;
+    for entry in fs::read_dir(src).context("读取源目录失败")? {
+        let entry = entry.context("遍历源目录失败")?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
         if src_path.is_dir() {
             copy_dir(&src_path, &dst_path)?;
         } else {
-            fs::copy(&src_path, &dst_path)?;
+            fs::copy(&src_path, &dst_path).context("复制文件失败")?;
         }
     }
     Ok(())
