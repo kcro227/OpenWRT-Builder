@@ -1,14 +1,68 @@
 use anyhow::{Context, Result};
 use colored::*;
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 use std::process;
 
-use crate::app::{CONFIG_SRC_KEY, SourceConfig, SRCS_DIR, TARGETS_DIR};
+use crate::app::{CONFIG_FILE, CONFIG_SRC_KEY, CONFIG_TARGET_KEY, SourceConfig, SRCS_DIR, TARGETS_DIR};
 use crate::build::run_make;
 use crate::config::{ensure_dir_exists, get_current_target, read_targets, sync_package_config, update_config};
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ExportManifest {
+    version: u32,
+    package_config: String,
+    targets: Vec<String>,
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
+    if !src.exists() {
+        anyhow::bail!("模板目录 '{}' 不存在", src.display());
+    }
+    fs::create_dir_all(dst).context("创建目标目录失败")?;
+
+    for entry in fs::read_dir(src).context("读取模板目录失败")? {
+        let entry = entry.context("读取模板目录项失败")?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let file_type = entry.file_type().context("读取目录项类型失败")?;
+
+        if file_type.is_dir() {
+            copy_dir_all(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path).with_context(|| {
+                format!("复制 '{}' 到 '{}' 失败", src_path.display(), dst_path.display())
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
+fn remove_config_key(key: &str) -> Result<()> {
+    let config_path = env::current_dir().context("无法获取当前工作目录")?.join(CONFIG_FILE);
+    if !config_path.exists() {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&config_path).context("读取 .config 失败")?;
+    let lines: Vec<String> = content.lines().map(String::from).collect();
+    let filtered: Vec<String> = lines
+        .into_iter()
+        .filter(|line| !(line.starts_with(key) && line.contains('=')))
+        .collect();
+
+    let mut file = fs::File::create(config_path).context("写入 .config 失败")?;
+    for line in filtered {
+        writeln!(file, "{}", line).context("写入 .config 失败")?;
+    }
+
+    Ok(())
+}
 
 pub fn list_targets<P: AsRef<Path>>(path: P) -> Result<()> {
     let path = path.as_ref();
@@ -23,6 +77,181 @@ pub fn list_targets<P: AsRef<Path>>(path: P) -> Result<()> {
             println!("  {}", target.green());
         }
     }
+    Ok(())
+}
+
+pub fn target_add(name: &str) -> Result<()> {
+    let target_name = name.trim();
+    if target_name.is_empty() {
+        anyhow::bail!("目标名称不能为空");
+    }
+
+    let target_dir = Path::new(TARGETS_DIR).join(target_name);
+    if target_dir.exists() {
+        anyhow::bail!("目标 '{}' 已存在", target_name);
+    }
+
+    let template_dir = Path::new(TARGETS_DIR).join("default");
+    if template_dir.exists() {
+        copy_dir_all(&template_dir, &target_dir).with_context(|| {
+            format!("从模板目录 '{}' 复制到新目标 '{}' 失败", template_dir.display(), target_dir.display())
+        })?;
+    } else {
+        fs::create_dir_all(target_dir.join("custom")).context("创建目标自定义脚本目录失败")?;
+        fs::create_dir_all(target_dir.join("resource")).context("创建目标 resource 目录失败")?;
+        fs::create_dir_all(target_dir.join("resources")).context("创建目标 resources 目录失败")?;
+
+        let template = SourceConfig {
+            url: "https://github.com/example/repo.git".to_string(),
+            revision: "main".to_string(),
+        };
+        let template_content = serde_json::to_string_pretty(&template).context("序列化 target template 失败")?;
+        fs::write(target_dir.join("source.json"), template_content).context("写入 source.json 失败")?;
+
+        let package_template = "# 按需添加包名，一行一个\n# 例如：\n# qmodem\n# openclash\n";
+        fs::write(target_dir.join("packagelist.txt"), package_template).context("写入 packagelist.txt 失败")?;
+    }
+
+    println!("{}", format!("已创建新目标: {}", target_name).green());
+    println!("{}", format!("模板来源: {}", template_dir.display()).cyan());
+    println!("{}", format!("请编辑 {} 里的 source.json 和 packagelist.txt", target_dir.display()).cyan());
+    Ok(())
+}
+
+pub fn target_remove(name: &str) -> Result<()> {
+    let target_name = name.trim();
+    if target_name.is_empty() {
+        anyhow::bail!("目标名称不能为空");
+    }
+    if target_name == "default" {
+        anyhow::bail!("不能删除模板目标 'default'");
+    }
+
+    let target_dir = Path::new(TARGETS_DIR).join(target_name);
+    if !target_dir.exists() {
+        anyhow::bail!("目标 '{}' 不存在", target_name);
+    }
+
+    println!("{}", format!("正在删除目标 '{}' ...", target_name).yellow());
+    fs::remove_dir_all(&target_dir).with_context(|| format!("删除目标目录 '{}' 失败", target_dir.display()))?;
+
+    let current_target = crate::config::read_current_target(&env::current_dir().context("无法获取当前工作目录")?.join(CONFIG_FILE))?;
+    if current_target.as_deref() == Some(target_name) {
+        remove_config_key(CONFIG_TARGET_KEY)?;
+        println!("{}", "当前目标已从 .config 中移除。".yellow());
+    }
+
+    let src_dir = Path::new(SRCS_DIR).join(target_name);
+    if src_dir.exists() {
+        fs::remove_dir_all(&src_dir).with_context(|| format!("删除源码目录 '{}' 失败", src_dir.display()))?;
+    }
+
+    println!("{}", format!("已删除目标: {}", target_name).green());
+    Ok(())
+}
+
+pub fn export_targets(output: &str) -> Result<()> {
+    let export_root = Path::new(output);
+    if export_root.exists() && export_root.is_file() {
+        anyhow::bail!("导出路径 '{}' 不能是文件", export_root.display());
+    }
+    if export_root.exists() {
+        fs::remove_dir_all(export_root).context("清理已有导出目录失败")?;
+    }
+    fs::create_dir_all(export_root).context("创建导出目录失败")?;
+
+    let package_src = Path::new("packages").join("feeds.config");
+    if !package_src.exists() {
+        anyhow::bail!("未找到 '{}'，无法导出包源配置", package_src.display());
+    }
+
+    let target_root = Path::new(TARGETS_DIR);
+    let mut target_names = Vec::new();
+    if target_root.exists() {
+        for entry in fs::read_dir(target_root).context("读取目标目录失败")? {
+            let entry = entry.context("读取目标目录项失败")?;
+            let file_type = entry.file_type().context("读取目标目录项类型失败")?;
+            if file_type.is_dir() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name != "default" {
+                        target_names.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let packages_dir = export_root.join("packages");
+    fs::create_dir_all(&packages_dir).context("创建 packages 导出目录失败")?;
+    fs::copy(&package_src, packages_dir.join("feeds.config")).with_context(|| {
+        format!("复制 '{}' 到 '{}' 失败", package_src.display(), packages_dir.join("feeds.config").display())
+    })?;
+
+    let export_targets_dir = export_root.join("targets");
+    fs::create_dir_all(&export_targets_dir).context("创建 targets 导出目录失败")?;
+    for name in &target_names {
+        let src_dir = target_root.join(name);
+        let dst_dir = export_targets_dir.join(name);
+        copy_dir_all(&src_dir, &dst_dir).with_context(|| {
+            format!("导出目标 '{}' 失败", name)
+        })?;
+    }
+
+    let manifest = ExportManifest {
+        version: 1,
+        package_config: "packages/feeds.config".to_string(),
+        targets: target_names,
+    };
+    let manifest_path = export_root.join("manifest.json");
+    let manifest_content = serde_json::to_string_pretty(&manifest).context("序列化导出清单失败")?;
+    fs::write(&manifest_path, manifest_content).context("写入导出清单失败")?;
+
+    println!("{}", format!("已导出自定义配置到 {}", export_root.display()).green());
+    Ok(())
+}
+
+pub fn import_targets(input: &str) -> Result<()> {
+    let import_root = Path::new(input);
+    if !import_root.exists() {
+        anyhow::bail!("导入目录 '{}' 不存在", import_root.display());
+    }
+    let manifest_path = import_root.join("manifest.json");
+    if !manifest_path.exists() {
+        anyhow::bail!("导入目录 '{}' 中没有 manifest.json，无法恢复配置", import_root.display());
+    }
+
+    let manifest: ExportManifest = serde_json::from_str(&fs::read_to_string(&manifest_path).context("读取导出清单失败")?)
+        .context("解析导出清单失败")?;
+
+    let package_src = import_root.join(&manifest.package_config);
+    if !package_src.exists() {
+        anyhow::bail!("导入目录中缺少包源配置文件 '{}'", package_src.display());
+    }
+    let package_dst = Path::new("packages").join("feeds.config");
+    if let Some(parent) = package_dst.parent() {
+        fs::create_dir_all(parent).context("创建 packages 目录失败")?;
+    }
+    fs::copy(&package_src, &package_dst).with_context(|| {
+        format!("复制 '{}' 到 '{}' 失败", package_src.display(), package_dst.display())
+    })?;
+
+    let target_root = Path::new(TARGETS_DIR);
+    let import_targets_dir = import_root.join("targets");
+    if import_targets_dir.exists() {
+        for target_name in &manifest.targets {
+            let src_dir = import_targets_dir.join(target_name);
+            let dst_dir = target_root.join(target_name);
+            if dst_dir.exists() {
+                println!("{}", format!("目标 '{}' 已存在，覆盖旧副本。", target_name).yellow());
+                fs::remove_dir_all(&dst_dir).with_context(|| format!("删除旧目标 '{}' 失败", dst_dir.display()))?;
+            }
+            copy_dir_all(&src_dir, &dst_dir).with_context(|| {
+                format!("导入目标 '{}' 失败", target_name)
+            })?;
+        }
+    }
+
+    println!("{}", format!("已从 {} 导入自定义配置。", import_root.display()).green());
     Ok(())
 }
 

@@ -32,6 +32,10 @@ enum Command {
     List,
     #[command(alias = "change")]
     Select,
+    #[command(alias = "backup")]
+    Export(ExportArgs),
+    #[command(alias = "restore")]
+    Import(ImportArgs),
     Target(TargetArgs),
     Package(PackageArgs),
     Sync,
@@ -49,6 +53,14 @@ struct TargetArgs {
 
 #[derive(Subcommand, Debug)]
 enum TargetAction {
+    #[command(alias = "new")]
+    Add {
+        name: String,
+    },
+    #[command(alias = "delete", alias = "rm")]
+    Remove {
+        name: String,
+    },
     Init,
     Update,
     Config {
@@ -56,6 +68,12 @@ enum TargetAction {
         extra_args: Vec<String>,
     },
     Feed,
+    Export {
+        output: Option<String>,
+    },
+    Import {
+        input: String,
+    },
     Download {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra_args: Vec<String>,
@@ -90,6 +108,16 @@ enum PackageAction {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         packages: Vec<String>,
     },
+}
+
+#[derive(Args, Debug)]
+struct ExportArgs {
+    output: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct ImportArgs {
+    input: String,
 }
 
 #[derive(Args, Debug)]
@@ -135,14 +163,20 @@ pub fn run() {
     match cli.command {
         Command::List => exit_on_error(crate::targets::list_targets(TARGETS_DIR)),
         Command::Select => exit_on_error(crate::config::change_target(TARGETS_DIR)),
+        Command::Export(args) => exit_on_error(crate::targets::export_targets(args.output.as_deref().unwrap_or("backup/owbm-export"))),
+        Command::Import(args) => exit_on_error(crate::targets::import_targets(&args.input)),
         Command::Target(args) => match args.action {
-            TargetAction::Init => exit_on_error(crate::targets::target_init()),
-            TargetAction::Update => exit_on_error(crate::targets::target_update()),
-            TargetAction::Config { .. } => exit_on_error(crate::targets::target_config()),
-            TargetAction::Feed => exit_on_error(crate::targets::target_feed()),
-            TargetAction::Download { .. } => exit_on_error(crate::targets::target_download()),
-            TargetAction::Clean { .. } => exit_on_error(crate::targets::target_clean()),
-            TargetAction::Distclean { .. } => exit_on_error(crate::targets::target_distclean()),
+           TargetAction::Add { name } => exit_on_error(crate::targets::target_add(&name)),
+           TargetAction::Remove { name } => exit_on_error(crate::targets::target_remove(&name)),
+           TargetAction::Init => exit_on_error(crate::targets::target_init()),
+           TargetAction::Update => exit_on_error(crate::targets::target_update()),
+           TargetAction::Config { .. } => exit_on_error(crate::targets::target_config()),
+           TargetAction::Feed => exit_on_error(crate::targets::target_feed()),
+           TargetAction::Export { output } => exit_on_error(crate::targets::export_targets(output.as_deref().unwrap_or("backup/owbm-export"))),
+           TargetAction::Import { input } => exit_on_error(crate::targets::import_targets(&input)),
+           TargetAction::Download { .. } => exit_on_error(crate::targets::target_download()),
+           TargetAction::Clean { .. } => exit_on_error(crate::targets::target_clean()),
+           TargetAction::Distclean { .. } => exit_on_error(crate::targets::target_distclean()),
         },
         Command::Package(args) => match args.action {
             PackageAction::Feed { .. } => exit_on_error(crate::packages::package_feed()),

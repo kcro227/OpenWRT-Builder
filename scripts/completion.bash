@@ -5,10 +5,10 @@ _owbm_completions() {
 
     case $prev in
         owbm)
-            COMPREPLY=($(compgen -W "list select change sync target package build custom run exec" -- "$cur"))
+            COMPREPLY=($(compgen -W "list select change sync export import target package build custom run exec" -- "$cur"))
             ;;
         target)
-            COMPREPLY=($(compgen -W "init update config feed download clean distclean" -- "$cur"))
+            COMPREPLY=($(compgen -W "add remove init update config feed export import download clean distclean" -- "$cur"))
             ;;
         package)
             COMPREPLY=($(compgen -W "feed install update" -- "$cur"))

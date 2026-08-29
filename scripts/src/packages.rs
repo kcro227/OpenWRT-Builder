@@ -32,11 +32,26 @@ pub fn parse_requested_packages(args: &[String]) -> Vec<String> {
     result
 }
 
-pub fn parse_feed_entries() -> Result<Vec<FeedEntry>> {
-    let feed_config_path = Path::new(PACKAGES_DIR).join(FEED_CONFIG_FILE);
-    if !feed_config_path.exists() {
-        anyhow::bail!("未找到 {}，请先创建 feeds 配置。", feed_config_path.display());
+fn find_feed_config_path() -> Result<PathBuf> {
+    let candidates = [
+        Path::new(PACKAGES_DIR).join("feeds.config"),
+        Path::new(PACKAGES_DIR).join(FEED_CONFIG_FILE),
+    ];
+
+    for candidate in candidates {
+        if candidate.exists() {
+            return Ok(candidate);
+        }
     }
+
+    let fallback = Path::new(PACKAGES_DIR).join(FEED_CONFIG_FILE);
+    anyhow::bail!("未找到 feeds 配置（{} 或 {}），请先创建 feeds 配置。", 
+        Path::new(PACKAGES_DIR).join("feeds.config").display(),
+        fallback.display());
+}
+
+pub fn parse_feed_entries() -> Result<Vec<FeedEntry>> {
+    let feed_config_path = find_feed_config_path()?;
 
     let file = File::open(&feed_config_path).context("打开 feeds 配置失败")?;
     let reader = BufReader::new(file);
