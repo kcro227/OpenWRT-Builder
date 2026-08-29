@@ -1,6 +1,6 @@
+use clap::{Args, Parser, Subcommand};
 use colored::*;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::process;
 
 pub const TARGETS_DIR: &str = "targets";
@@ -19,137 +19,135 @@ pub struct SourceConfig {
 
 pub static INTERRUPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+#[derive(Parser, Debug)]
+#[command(name = "owbm", about = "OpenWrt Build Manager", version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    List,
+    Change,
+    Target(TargetArgs),
+    Package(PackageArgs),
+    Sync,
+    Build(BuildArgs),
+    Custom(CustomArgs),
+    Command(CommandArgs),
+}
+
+#[derive(Args, Debug)]
+struct TargetArgs {
+    #[command(subcommand)]
+    action: TargetAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum TargetAction {
+    Init,
+    Update,
+    Config {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        extra_args: Vec<String>,
+    },
+    Feed,
+    Download {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        extra_args: Vec<String>,
+    },
+    Clean {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        extra_args: Vec<String>,
+    },
+    Distclean {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        extra_args: Vec<String>,
+    },
+}
+
+#[derive(Args, Debug)]
+struct PackageArgs {
+    #[command(subcommand)]
+    action: PackageAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum PackageAction {
+    Feed {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        packages: Vec<String>,
+    },
+    Update {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        packages: Vec<String>,
+    },
+    Install {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        packages: Vec<String>,
+    },
+}
+
+#[derive(Args, Debug)]
+struct BuildArgs {
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    extra_args: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+struct CustomArgs {
+    name: String,
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    extra_args: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+struct CommandArgs {
+    cmd: String,
+}
+
+fn exit_on_error<T>(result: Result<T, Box<dyn std::error::Error>>) {
+    if let Err(err) = result {
+        eprintln!("{}", format!("错误: {}", err).red());
+        process::exit(1);
+    }
+}
+
 pub fn run() {
     ctrlc::set_handler(|| {
         INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
     })
     .expect("设置 Ctrl+C 处理函数失败");
 
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() < 2 {
-        print_help();
-        process::exit(1);
-    }
-
-    let command = &args[1];
-    match command.as_str() {
-        "list" => {
-            if let Err(err) = crate::targets::list_targets(TARGETS_DIR) {
-                eprintln!("{}", format!("错误: {}", err).red());
-                process::exit(1);
-            }
-        }
-        "change" => {
-            if let Err(err) = crate::config::change_target(TARGETS_DIR) {
-                eprintln!("{}", format!("错误: {}", err).red());
-                process::exit(1);
-            }
-        }
-        "target" => {
-            if args.len() < 3 {
-                eprintln!("{}", "请指定 target 子命令: init, update, config, feed, download, clean, distclean".red());
-                process::exit(1);
-            }
-            let sub = &args[2];
-            let result = match sub.as_str() {
-                "init" => crate::targets::target_init(),
-                "update" => crate::targets::target_update(),
-                "config" => crate::targets::target_config(),
-                "feed" => crate::targets::target_feed(),
-                "download" => crate::targets::target_download(),
-                "clean" => crate::targets::target_clean(),
-                "distclean" => crate::targets::target_distclean(),
-                _ => {
-                    eprintln!("{}", format!("未知 target 子命令: {}", sub).red());
-                    process::exit(1);
-                }
-            };
-            if let Err(err) = result {
-                eprintln!("{}", format!("错误: {}", err).red());
-                process::exit(1);
-            }
-        }
-        "package" => {
-            if args.len() < 3 {
-                eprintln!("{}", "请指定 package 子命令: feed, update 或 install".red());
-                process::exit(1);
-            }
-            let sub = &args[2];
-            let result = match sub.as_str() {
-                "feed" => crate::packages::package_feed(),
-                "update" => crate::packages::package_update(),
-                "install" => crate::packages::package_install(),
-                _ => {
-                    eprintln!("{}", format!("未知 package 子命令: {}", sub).red());
-                    process::exit(1);
-                }
-            };
-            if let Err(err) = result {
-                eprintln!("{}", format!("错误: {}", err).red());
-                process::exit(1);
-            }
-        }
-        "sync" => {
-            if let Err(err) = crate::targets::config_sync() {
-                eprintln!("{}", format!("错误: {}", err).red());
-                process::exit(1);
-            }
-        }
-        "build" => {
-            if let Err(err) = crate::build::build() {
-                eprintln!("{}", format!("错误: {}", err).red());
-                process::exit(1);
-            }
-        }
-        "custom" => {
-            if args.len() < 3 {
-                eprintln!("{}", "请指定要执行的自定义脚本名称".red());
-                process::exit(1);
-            }
-            let script_name = &args[2];
-            let extra_args: Vec<String> = args.iter().skip(3).cloned().collect();
-            if let Err(err) = crate::build::run_custom_script(script_name, &extra_args) {
-                eprintln!("{}", format!("错误: {}", err).red());
-                process::exit(1);
-            }
-        }
-        "command" => {
-            if args.len() < 3 {
-                eprintln!("{}", "请指定要在源码目录中执行的命令 (带引号)".red());
-                process::exit(1);
-            }
-            let cmd = &args[2];
-            if let Err(err) = crate::build::run_command(cmd) {
-                eprintln!("{}", format!("错误: {}", err).red());
-                process::exit(1);
-            }
-        }
-        _ => {
-            eprintln!("{}", format!("未知命令: {}", command).red());
-            print_help();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(err) => {
+            eprintln!("{}", err);
             process::exit(1);
         }
-    }
-}
+    };
 
-pub fn print_help() {
-    println!("{}", "owbm - OpenWrt Build Manager".cyan().bold());
-    println!("{}", "用法:".yellow());
-    println!("  {} {}", "owbm list".green(), "                 列出所有可用的编译目标".white());
-    println!("  {} {}", "owbm change".green(), "               交互式选择编译目标并保存到 .config".white());
-    println!("  {} {}", "owbm sync".green(), "                 同步当前目标的软件包配置到 .config".white());
-    println!("  {} {}", "owbm target init".green(), "          初始化当前目标的源码配置并下载".white());
-    println!("  {} {}", "owbm target update".green(), "        更新当前目标的源码".white());
-    println!("  {} {}", "owbm target config".green(), "        运行 make menuconfig 配置内核".white());
-    println!("  {} {}", "owbm target feed".green(), "          更新并安装 feeds".white());
-    println!("  {} {}", "owbm target download".green(), "       下载所需的软件包 (make download)".white());
-    println!("  {} {}", "owbm target clean".green(), "         清理编译中间文件 (make clean)".white());
-    println!("  {} {}", "owbm target distclean".green(), "     彻底清理 (make distclean)".white());
-    println!("  {} {}", "owbm package feed [pkg;pkg]".green(), " 下载 feeds.config 中定义的软件包（可选指定包名）".white());
-    println!("  {} {}", "owbm package update [pkg;pkg]".green(), " 更新 feeds.config 中已下载的软件包（可选指定包名）".white());
-    println!("  {} {}", "owbm package install [pkg;pkg]".green(), " 根据 .config 安装选中的软件包（可选指定包名）".white());
-    println!("  {} {}", "owbm build".green(), "                编译源码".white());
-    println!("  {} {}", "owbm custom <name>".green(), "         执行当前目标的自定义脚本".white());
-    println!("  {} {}", "owbm command \"<cmd>\"".green(), "     在源码目录中执行任意命令".white());
+    match cli.command {
+        Command::List => exit_on_error(crate::targets::list_targets(TARGETS_DIR)),
+        Command::Change => exit_on_error(crate::config::change_target(TARGETS_DIR)),
+        Command::Target(args) => match args.action {
+            TargetAction::Init => exit_on_error(crate::targets::target_init()),
+            TargetAction::Update => exit_on_error(crate::targets::target_update()),
+            TargetAction::Config { .. } => exit_on_error(crate::targets::target_config()),
+            TargetAction::Feed => exit_on_error(crate::targets::target_feed()),
+            TargetAction::Download { .. } => exit_on_error(crate::targets::target_download()),
+            TargetAction::Clean { .. } => exit_on_error(crate::targets::target_clean()),
+            TargetAction::Distclean { .. } => exit_on_error(crate::targets::target_distclean()),
+        },
+        Command::Package(args) => match args.action {
+            PackageAction::Feed { .. } => exit_on_error(crate::packages::package_feed()),
+            PackageAction::Update { .. } => exit_on_error(crate::packages::package_update()),
+            PackageAction::Install { .. } => exit_on_error(crate::packages::package_install()),
+        },
+        Command::Sync => exit_on_error(crate::targets::config_sync()),
+        Command::Build(_) => exit_on_error(crate::build::build()),
+        Command::Custom(args) => exit_on_error(crate::build::run_custom_script(&args.name, &args.extra_args)),
+        Command::Command(args) => exit_on_error(crate::build::run_command(&args.cmd)),
+    }
 }
