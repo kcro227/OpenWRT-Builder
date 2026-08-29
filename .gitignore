@@ -9,7 +9,6 @@ target/
 
 # Downloaded package feeds (feed.config is the tracked config)
 /packages/*
-!/packages/feed.config
 
 # Downloaded OpenWrt source trees
 /srcs/
