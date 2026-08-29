@@ -18,8 +18,8 @@ case "$MODE" in
         OUTPUT_PATH="$RUST_SRC_DIR/target/debug/owbm"
         ;;
     clean)
-        rm -rf "$RUST_SRC_DIR/target" "$BIN_PATH"
-        echo "已清理构建产物：$RUST_SRC_DIR/target 和 $BIN_PATH"
+        rm -rf "$RUST_SRC_DIR/target"
+        echo "已清理构建产物：$RUST_SRC_DIR/target
         exit 0
         ;;
     *)
