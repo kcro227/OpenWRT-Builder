@@ -5,26 +5,28 @@ _owbm_completions() {
 
     case $prev in
         owbm)
-            COMPREPLY=($(compgen -W "list change sync target package build custom command" -- "$cur"))
+            COMPREPLY=($(compgen -W "list select change sync target package build custom run exec" -- "$cur"))
             ;;
         target)
-            COMPREPLY=($(compgen -W "init update config feed download" -- "$cur"))
+            COMPREPLY=($(compgen -W "init update config feed download clean distclean" -- "$cur"))
             ;;
         package)
             COMPREPLY=($(compgen -W "feed install update" -- "$cur"))
             ;;
         custom)
-            # 获取当前目标
-            local target=$(grep -E '^CONFIG_TARGET=' .config 2>/dev/null | cut -d= -f2)
-            if [[ -n "$target" && -d "targets/$target/cus" ]]; then
-                # 列出 cus 目录下的所有脚本（按命名规则提取短名）
+            local target
+            target=$(grep -E '^CONFIG_TARGET=' .config 2>/dev/null | cut -d= -f2 | tr -d '\r')
+            if [[ -n "$target" && -d "targets/$target/custom" ]]; then
                 local scripts=()
-                for f in targets/$target/cus/*; do
+                local f
+                for f in "targets/$target/custom"/*; do
                     if [[ -f "$f" ]]; then
-                        local base=$(basename "$f")
-                        # 提取下划线后的部分，直到点号
-                        local name=$(echo "$base" | sed -n 's/^[^_]*_\([^.]*\).*$/\1/p')
-                        [[ -n "$name" ]] && scripts+=("$name")
+                        local base name
+                        base=$(basename "$f")
+                        name=$(echo "$base" | sed -n 's/^[^_]*_\([^.]*\).*$/\1/p')
+                        if [[ -n "$name" ]]; then
+                            scripts+=("$name")
+                        fi
                     fi
                 done
                 COMPREPLY=($(compgen -W "${scripts[*]}" -- "$cur"))
