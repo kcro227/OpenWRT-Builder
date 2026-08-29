@@ -1,7 +1,20 @@
-**/target
-.config
-./owbm
-packages/*
-srcs
-targets/**
-!targets/default/**
+# Rust build output (scripts/target, etc.)
+target/
+
+# owbm binary produced by build.sh
+/owbm
+
+# OpenWrt .config generated in the project root
+/.config
+
+# Downloaded package feeds (feed.config is the tracked config)
+/packages/*
+!/packages/feed.config
+
+# Downloaded OpenWrt source trees
+/srcs/
+
+# Target definitions; keep the default target
+/targets/*
+!/targets/default/
+!/targets/default/**

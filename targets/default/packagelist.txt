@@ -1,0 +1,4 @@
+# packages文件夹中的软件包文件名称
+qmodem
+openwrt_packages
+openclash
