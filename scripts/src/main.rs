@@ -198,9 +198,9 @@ fn print_help() {
     println!("  {} {}", "owbm target download".green(), "       下载所需的软件包 (make download)".white());
     println!("  {} {}", "owbm target clean".green(), "         清理编译中间文件 (make clean)".white());
     println!("  {} {}", "owbm target distclean".green(), "     彻底清理 (make distclean)".white());
-    println!("  {} {}", "owbm package feed".green(), "         下载 feeds.config 中定义的软件包".white());
-    println!("  {} {}", "owbm package update".green(), "       更新 feeds.config 中已下载的软件包".white());
-    println!("  {} {}", "owbm package install".green(), "      根据 .config 安装选中的软件包".white());
+    println!("  {} {}", "owbm package feed [pkg;pkg]".green(), " 下载 feeds.config 中定义的软件包（可选指定包名）".white());
+    println!("  {} {}", "owbm package update [pkg;pkg]".green(), " 更新 feeds.config 中已下载的软件包（可选指定包名）".white());
+    println!("  {} {}", "owbm package install [pkg;pkg]".green(), " 根据 .config 安装选中的软件包（可选指定包名）".white());
     println!("  {} {}", "owbm build".green(), "                编译源码".white());
     println!("  {} {}", "owbm custom <name>".green(), "         执行当前目标的自定义脚本".white());
     println!("  {} {}", "owbm command \"<cmd>\"".green(), "     在源码目录中执行任意命令".white());
@@ -762,8 +762,28 @@ fn run_command(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// package feed: 下载 feeds.config 中定义的软件包
-fn package_feed() -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Clone, Debug)]
+struct FeedEntry {
+    feed_type: String,
+    feed_name: String,
+    base_url: String,
+    revision: Option<String>,
+}
+
+fn parse_requested_packages(args: &[String]) -> Vec<String> {
+    let mut result = Vec::new();
+    for arg in args {
+        for part in arg.split(';') {
+            let item = part.trim();
+            if !item.is_empty() {
+                result.push(item.to_string());
+            }
+        }
+    }
+    result
+}
+
+fn parse_feed_entries() -> Result<Vec<FeedEntry>, Box<dyn std::error::Error>> {
     let feed_config_path = Path::new(PACKAGES_DIR).join(FEED_CONFIG_FILE);
     if !feed_config_path.exists() {
         return Err(format!(
@@ -775,47 +795,295 @@ fn package_feed() -> Result<(), Box<dyn std::error::Error>> {
 
     let file = File::open(&feed_config_path)?;
     let reader = BufReader::new(file);
+    let mut entries = Vec::new();
+
     for line in reader.lines() {
         let line = line?;
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
+
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 3 {
             eprintln!("{}", format!("警告: 无效的 feed 配置行: {}", line).yellow());
             continue;
         }
-        let feed_type = parts[0];
-        let feed_name = parts[1];
+
+        let feed_type = parts[0].to_string();
+        let feed_name = parts[1].to_string();
         let url_and_rev = parts[2];
 
         let (base_url, revision) = if let Some(semi_pos) = url_and_rev.find(';') {
             let (url, rev) = url_and_rev.split_at(semi_pos);
             let rev = rev.trim_start_matches(';');
             if rev.is_empty() {
-                (url, None)
+                (url.to_string(), None)
             } else {
-                (url, Some(rev))
+                (url.to_string(), Some(rev.to_string()))
             }
         } else {
-            (url_and_rev, None)
+            (url_and_rev.to_string(), None)
         };
 
+        entries.push(FeedEntry {
+            feed_type,
+            feed_name,
+            base_url,
+            revision,
+        });
+    }
+
+    Ok(entries)
+}
+
+fn git_remote_url(repo_dir: &Path) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let output = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .arg("remote")
+        .arg("get-url")
+        .arg("origin")
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if url.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(url))
+}
+
+fn ensure_git_remote_matches(repo_dir: &Path, expected_url: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    let current = git_remote_url(repo_dir)?;
+    if let Some(current_url) = current {
+        if current_url == expected_url {
+            return Ok(false);
+        }
+        println!(
+            "{}",
+            format!(
+                "Feed '{}' 的远程地址不匹配，正在切换到 feeds.config 定义的地址: {}",
+                repo_dir.display(),
+                expected_url
+            )
+            .yellow()
+        );
+        let status = process::Command::new("git")
+            .arg("-C")
+            .arg(repo_dir)
+            .arg("remote")
+            .arg("set-url")
+            .arg("origin")
+            .arg(expected_url)
+            .status()?;
+        if !status.success() {
+            return Err(format!("更新 feed 远程地址失败: {}", repo_dir.display()).into());
+        }
+        return Ok(true);
+    }
+
+    let status = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .arg("remote")
+        .arg("add")
+        .arg("origin")
+        .arg(expected_url)
+        .status()?;
+    if !status.success() {
+        return Err(format!("添加 feed 远程地址失败: {}", repo_dir.display()).into());
+    }
+    Ok(true)
+}
+
+fn detect_remote_branch(repo_dir: &Path, revision: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(rev) = revision {
+        return Ok(rev.to_string());
+    }
+
+    let symbolic = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .arg("symbolic-ref")
+        .arg("--short")
+        .arg("refs/remotes/origin/HEAD")
+        .output()?;
+    if symbolic.status.success() {
+        let value = String::from_utf8_lossy(&symbolic.stdout).trim().to_string();
+        if !value.is_empty() {
+            let branch = value.strip_prefix("origin/").unwrap_or(&value);
+            if !branch.is_empty() {
+                return Ok(branch.to_string());
+            }
+        }
+    }
+
+    let show = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .arg("remote")
+        .arg("show")
+        .arg("origin")
+        .output()?;
+    if show.status.success() {
+        let text = String::from_utf8_lossy(&show.stdout);
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("HEAD branch:") {
+                let branch = trimmed.trim_start_matches("HEAD branch:").trim();
+                if !branch.is_empty() {
+                    return Ok(branch.to_string());
+                }
+            }
+        }
+    }
+
+    let branch_output = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .arg("for-each-ref")
+        .arg("--format=%(refname:short)")
+        .arg("refs/remotes/origin")
+        .output()?;
+    if branch_output.status.success() {
+        let text = String::from_utf8_lossy(&branch_output.stdout);
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed == "origin/HEAD" {
+                continue;
+            }
+            if let Some(branch) = trimmed.strip_prefix("origin/") {
+                if !branch.is_empty() {
+                    return Ok(branch.to_string());
+                }
+            }
+        }
+    }
+
+    Ok("main".to_string())
+}
+
+fn refresh_git_feed(
+    repo_dir: &Path,
+    expected_url: &str,
+    revision: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let branch = detect_remote_branch(repo_dir, revision)?;
+
+    let fetch_status = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .arg("fetch")
+        .arg("origin")
+        .arg("--prune")
+        .status()?;
+    if !fetch_status.success() {
+        return Err(format!("git fetch origin 失败: {}", repo_dir.display()).into());
+    }
+
+    let reset_target = format!("origin/{}", branch);
+    let reset_status = process::Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .arg("reset")
+        .arg("--hard")
+        .arg(&reset_target)
+        .status()?;
+
+    if !reset_status.success() {
+        println!(
+            "{}",
+            format!(
+                "git reset --hard {} 失败，尝试删除目录并按 feeds.config 重新拉取: {}",
+                reset_target,
+                repo_dir.display()
+            )
+            .yellow()
+        );
+        let _ = fs::remove_dir_all(repo_dir);
+
+        let mut clone_cmd = process::Command::new("git");
+        clone_cmd.arg("clone").arg("--depth").arg("1");
+        if let Some(rev) = revision {
+            clone_cmd.arg("--branch").arg(rev);
+        }
+        clone_cmd.arg(expected_url).arg(repo_dir);
+        let clone_status = clone_cmd.status()?;
+        if !clone_status.success() {
+            return Err(format!("重新拉取 feed 失败: {}", repo_dir.display()).into());
+        }
+        return Ok(());
+    }
+
+    Ok(())
+}
+
+/// package feed: 下载 feeds.config 中定义的软件包
+fn package_feed() -> Result<(), Box<dyn std::error::Error>> {
+    let entries = parse_feed_entries()?;
+    let args: Vec<String> = env::args().collect();
+    let selected = parse_requested_packages(&args[3..]);
+    let filtered: Vec<_> = if selected.is_empty() {
+        entries
+    } else {
+        entries
+            .into_iter()
+            .filter(|entry| selected.iter().any(|name| name == &entry.feed_name))
+            .collect()
+    };
+
+    for entry in filtered {
+        let feed_type = entry.feed_type.as_str();
+        let feed_name = entry.feed_name.as_str();
+        let base_url = entry.base_url.as_str();
+        let revision = entry.revision.as_deref();
         let feed_dir = Path::new(PACKAGES_DIR).join(feed_name);
 
         if feed_dir.exists() {
-            let confirm = Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt(format!(
-                    "Feed 目录 '{}' 已存在，是否删除并重新下载？",
-                    feed_dir.display()
-                ))
-                .interact()?;
-            if confirm {
-                fs::remove_dir_all(&feed_dir)?;
+            let remote_url = git_remote_url(&feed_dir)?;
+            if let Some(current_url) = remote_url {
+                if current_url != base_url {
+                    println!(
+                        "{}",
+                        format!(
+                            "Feed '{}' 远程地址与 feeds.config 不一致，按配置地址重新拉取: {}",
+                            feed_name, base_url
+                        )
+                        .yellow()
+                    );
+                    let _ = fs::remove_dir_all(&feed_dir);
+                } else {
+                    let confirm = Confirm::with_theme(&ColorfulTheme::default())
+                        .with_prompt(format!(
+                            "Feed 目录 '{}' 已存在，是否删除并重新下载？",
+                            feed_dir.display()
+                        ))
+                        .interact()?;
+                    if confirm {
+                        fs::remove_dir_all(&feed_dir)?;
+                    } else {
+                        println!("{}", format!("跳过 feed: {}", feed_name).yellow());
+                        continue;
+                    }
+                }
             } else {
-                println!("{}", format!("跳过 feed: {}", feed_name).yellow());
-                continue;
+                let confirm = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt(format!(
+                        "Feed 目录 '{}' 已存在，是否删除并重新下载？",
+                        feed_dir.display()
+                    ))
+                    .interact()?;
+                if confirm {
+                    fs::remove_dir_all(&feed_dir)?;
+                } else {
+                    println!("{}", format!("跳过 feed: {}", feed_name).yellow());
+                    continue;
+                }
             }
         }
 
@@ -867,32 +1135,23 @@ fn package_feed() -> Result<(), Box<dyn std::error::Error>> {
 
 /// package update: 更新 feeds.config 中定义的已下载软件包
 fn package_update() -> Result<(), Box<dyn std::error::Error>> {
-    let feed_config_path = Path::new(PACKAGES_DIR).join(FEED_CONFIG_FILE);
-    if !feed_config_path.exists() {
-        return Err(format!(
-            "未找到 {}，请先创建 feeds 配置。",
-            feed_config_path.display()
-        )
-        .into());
-    }
+    let entries = parse_feed_entries()?;
+    let args: Vec<String> = env::args().collect();
+    let selected = parse_requested_packages(&args[3..]);
+    let filtered: Vec<_> = if selected.is_empty() {
+        entries
+    } else {
+        entries
+            .into_iter()
+            .filter(|entry| selected.iter().any(|name| name == &entry.feed_name))
+            .collect()
+    };
 
-    let file = File::open(&feed_config_path)?;
-    let reader = BufReader::new(file);
-    for line in reader.lines() {
-        let line = line?;
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 3 {
-            eprintln!("{}", format!("警告: 无效的 feed 配置行: {}", line).yellow());
-            continue;
-        }
-        let feed_type = parts[0];
-        let feed_name = parts[1];
-        // 第三部分是 url;revision，更新时只关心目录位置
-
+    for entry in filtered {
+        let feed_type = entry.feed_type.as_str();
+        let feed_name = entry.feed_name.as_str();
+        let base_url = entry.base_url.as_str();
+        let revision = entry.revision.as_deref();
         let feed_dir = Path::new(PACKAGES_DIR).join(feed_name);
 
         if !feed_dir.exists() {
@@ -907,10 +1166,12 @@ fn package_update() -> Result<(), Box<dyn std::error::Error>> {
 
         let status = match feed_type {
             "src-git" => {
+                let _ = ensure_git_remote_matches(&feed_dir, base_url)?;
+                refresh_git_feed(&feed_dir, base_url, revision)?;
                 process::Command::new("git")
                     .arg("-C")
                     .arg(&feed_dir)
-                    .arg("pull")
+                    .arg("status")
                     .status()?
             }
             "src-svn" => {
@@ -950,6 +1211,9 @@ fn package_install() -> Result<(), Box<dyn std::error::Error>> {
     let custom_dir = target_src_dir.join("package").join("custom");
     fs::create_dir_all(&custom_dir)?;
 
+    let args: Vec<String> = env::args().collect();
+    let requested = parse_requested_packages(&args[3..]);
+
     // 从 .config 中读取所有 CONFIG_PACKAGE_* = y 的包
     let config_path = env::current_dir()?.join(CONFIG_FILE);
     if !config_path.exists() {
@@ -973,10 +1237,25 @@ fn package_install() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    if !requested.is_empty() {
+        selected_packages.retain(|pkg| {
+            requested.iter().any(|name| {
+                pkg == name
+                    || pkg.ends_with(&format!("/{}", name))
+                    || name.ends_with(&format!("/{}", pkg))
+                    || Path::new(pkg)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .map(|base| base == name)
+                        .unwrap_or(false)
+            })
+        });
+    }
+
     if selected_packages.is_empty() {
         println!(
             "{}",
-            "没有选中的软件包（.config 中没有 CONFIG_PACKAGE_xxx=y 条目）。".yellow()
+            "没有选中的软件包（.config 中没有 CONFIG_PACKAGE_xxx=y 条目，或指定的软件包未匹配到配置）。".yellow()
         );
         return Ok(());
     }
@@ -990,19 +1269,28 @@ fn package_install() -> Result<(), Box<dyn std::error::Error>> {
     for pkg in &selected_packages {
         let found = find_package_dir(pkg)?;
         if let Some(src_path) = found {
-            let dest_path = custom_dir.join(pkg);
+            // 如果用户在 .config 中使用了子路径（例如 "feeds/packages/foo/bar" 或 "some/sub/pkg"），
+            // 作为目标目录只使用最后一段作为包名（复制到 package/custom/<basename>），
+            // 同时支持直接使用带 / 的相对路径在 packages/ 下定位要复制的目录。
+            let dest_name = Path::new(pkg)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(pkg);
+            let dest_path = custom_dir.join(dest_name);
+
             if dest_path.exists() {
                 let confirm = Confirm::with_theme(&ColorfulTheme::default())
-                    .with_prompt(format!("包 '{}' 已存在，是否覆盖？", pkg))
+                    .with_prompt(format!("包 '{}' 已存在，是否覆盖？", dest_name))
                     .interact()?;
                 if !confirm {
-                    println!("{}", format!("跳过包: {}", pkg).yellow());
+                    println!("{}", format!("跳过包: {}", dest_name).yellow());
                     continue;
                 }
                 fs::remove_dir_all(&dest_path)?;
             }
+
             copy_dir(&src_path, &dest_path)?;
-            println!("{}", format!("已安装包: {}", pkg).green());
+            println!("{}", format!("已安装包: {}", dest_name).green());
         } else {
             println!(
                 "{}",
@@ -1018,25 +1306,79 @@ fn package_install() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// 在 packages 目录下递归查找与包名同名的子目录
+/// 在 packages 目录下查找与包名同名的目录。
+/// 支持两种形式：
+/// - 直接包名，例如 "mwan3"。优先匹配 packages/<name>（顶级子目录），若不存在则在子目录中选择最浅的匹配。
+/// - 带子路径的形式，例如 "feeds/packages/lang/golang" 或 "some/dir/pkg"，会被视为相对于 packages/ 的子路径（packages/<path>）。
 fn find_package_dir(package_name: &str) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
     let packages_dir = Path::new(PACKAGES_DIR);
     if !packages_dir.exists() {
         return Ok(None);
     }
 
-    for entry in WalkDir::new(packages_dir)
-        .min_depth(1)
-        .max_depth(10)
-        .into_iter()
-        .filter_entry(|e| e.file_type().is_dir())
-    {
-        let entry = entry?;
-        if entry.file_name() == package_name {
-            return Ok(Some(entry.path().to_path_buf()));
+    // 支持以 "package/xxx" 形式强制指向 packages/ 下的子目录
+    if package_name.starts_with("package/") {
+        let rel = package_name.trim_start_matches("package/");
+        let candidate = packages_dir.join(rel);
+        if candidate.exists() && candidate.is_dir() {
+            return Ok(Some(candidate));
+        } else {
+            return Ok(None);
         }
     }
-    Ok(None)
+
+    // 如果包含路径分隔符，按相对路径解析到 packages/<package_name>
+    if package_name.contains('/') {
+        let candidate = packages_dir.join(package_name);
+        if candidate.exists() && candidate.is_dir() {
+            return Ok(Some(candidate));
+        } else {
+            return Ok(None);
+        }
+    }
+
+    // 首先尝试直接在 packages/ 下查找同名顶级目录（优先级最高）
+    let direct = packages_dir.join(package_name);
+    if direct.exists() && direct.is_dir() {
+        return Ok(Some(direct));
+    }
+
+    // 否则在子目录中递归查找，收集所有同名目录并按优先级选择：
+    // 1) 首选位于 packages/ 下的顶级同名目录（相对 components == 1）
+    // 2) 否则选择相对路径组件最少（即最浅）的匹配，避免匹配到包内部的深层同名子目录
+    let mut matches: Vec<(usize, usize, PathBuf)> = Vec::new(); // (components_count, depth, path)
+    for entry in WalkDir::new(packages_dir)
+        .min_depth(1)
+        .max_depth(20)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_dir())
+    {
+        if entry.file_name() == package_name {
+            let path = entry.path().to_path_buf();
+            // 计算相对 components 数量
+            if let Ok(rel) = path.strip_prefix(packages_dir) {
+                let mut comp_count = 0usize;
+                for _ in rel.components() {
+                    comp_count += 1;
+                }
+                matches.push((comp_count, entry.depth(), path));
+            }
+        }
+    }
+
+    if matches.is_empty() {
+        return Ok(None);
+    }
+
+    // 优先选择 components == 1（顶级子目录）
+    matches.sort_by(|a, b| {
+        // 先按 components 升序，再按 depth 升序
+        a.0.cmp(&b.0).then(a.1.cmp(&b.1))
+    });
+
+    // 返回最优匹配
+    Ok(Some(matches[0].2.clone()))
 }
 
 /// 递归复制目录
