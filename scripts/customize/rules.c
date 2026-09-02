@@ -968,8 +968,7 @@ int execute_rule(const Rule *rule, const char *src_dir, const char *res_dir,
 // 执行所有规则
 int execute_rules(Rule *rules, int rule_count, ContextType current_context, 
                   const char *src_dir, const char *res_dir, const char *author,
-                  char **variables, int var_count) {
-    char *build_time = get_current_time_str();
+                  const char *build_time, char **variables, int var_count) {
     int success_count = 0;
     int fail_count = 0;
     
@@ -1003,8 +1002,6 @@ int execute_rules(Rule *rules, int rule_count, ContextType current_context,
             fail_count++;
         }
     }
-    
-    free(build_time);
     
     if (fail_count == 0) {
         log_info("所有规则执行成功 (%d 个)", success_count);

@@ -44,7 +44,7 @@ int parse_customize_config(const char *filename, Rule **rules, int *rule_count,
 void free_rules_and_vars(Rule *rules, int rule_count, char **variables, int var_count);
 int execute_rules(Rule *rules, int rule_count, ContextType current_context, 
                   const char *src_dir, const char *res_dir, const char *author,
-                  char **variables, int var_count);
+                  const char *build_time, char **variables, int var_count);
 ContextType parse_context(const char *context_str);
 OperationType parse_operation(const char *operation_str);
 char* replace_variables(const char *str, const char *src_dir, const char *res_dir, 

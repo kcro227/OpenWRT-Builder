@@ -1,0 +1,20 @@
+#!/bin/sh
+
+if [ "$1" = "build" ]; then
+    shift
+    case "$1" in
+        --time)
+            shift
+            exec env BUILD_TIME=1 make build "$@"
+            ;;
+        --time=*)
+            build_time=${1#--time=}
+            shift
+            exec env "BUILD_TIME=$build_time" make build "$@"
+            ;;
+    esac
+
+    exec make build "$@"
+fi
+
+exec make "$@"

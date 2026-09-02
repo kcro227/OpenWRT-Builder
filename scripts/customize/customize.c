@@ -18,6 +18,7 @@ void print_usage(const char *program_name) {
     printf("  -s, --src-dir <dir>  指定源码目录 (默认: 项目根目录/srcs)\n");
     printf("  -r, --res-dir <dir>  指定资源目录 (默认: 配置文件所在目录/res)\n");
     printf("  -a, --author <name>  指定作者名称 (默认从配置文件读取)\n");
+    printf("  -t, --time[=<time>]  指定构建时间（不指定值时使用当前时间）\n");
 }
 
 // 获取项目根目录
@@ -133,12 +134,14 @@ int main(int argc, char *argv[]) {
     char *src_dir = NULL;
     char *res_dir = NULL;
     char *author = NULL;
+    char *build_time = NULL;
     char *project_root = NULL;
     
     // 标记哪些指针是动态分配的
     bool src_dir_allocated = false;
     bool res_dir_allocated = false;
     bool author_allocated = false;
+    bool build_time_allocated = false;
     
     // 解析命令行参数
     static struct option long_options[] = {
@@ -147,11 +150,12 @@ int main(int argc, char *argv[]) {
         {"src-dir", required_argument, 0, 's'},
         {"res-dir", required_argument, 0, 'r'},
         {"author", required_argument, 0, 'a'},
+        {"time", optional_argument, 0, 't'},
         {0, 0, 0, 0}
     };
     
     int opt;
-    while ((opt = getopt_long(argc, argv, "hc:s:r:a:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s:r:a:t::", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h':
                 print_usage(argv[0]);
@@ -178,6 +182,24 @@ int main(int argc, char *argv[]) {
             case 'a':
                 author = optarg;
                 author_allocated = false;
+                break;
+
+            case 't':
+                if (optarg != NULL) {
+                    build_time = strdup(optarg);
+                    if (build_time == NULL) {
+                        log_error("错误: 分配构建时间失败");
+                        return 1;
+                    }
+                    build_time_allocated = true;
+                } else {
+                    build_time = get_current_time_str();
+                    if (build_time == NULL) {
+                        log_error("错误: 获取构建时间失败");
+                        return 1;
+                    }
+                    build_time_allocated = true;
+                }
                 break;
                 
             default:
@@ -241,6 +263,7 @@ int main(int argc, char *argv[]) {
         if (src_dir_allocated) free(src_dir);
         if (res_dir_allocated) free(res_dir);
         if (author_allocated) free(author);
+        if (build_time_allocated) free(build_time);
         return 1;
     }
     
@@ -251,11 +274,27 @@ int main(int argc, char *argv[]) {
         if (src_dir_allocated) free(src_dir);
         if (res_dir_allocated) free(res_dir);
         if (author_allocated) free(author);
+        if (build_time_allocated) free(build_time);
         return 0;
     }
     
     // 执行规则
-    int result = execute_rules(rules, rule_count, context, src_dir, res_dir, author, variables, var_count);
+    if (build_time == NULL) {
+        build_time = get_current_time_str();
+        if (build_time == NULL) {
+            log_error("错误: 获取构建时间失败");
+            free_rules_and_vars(rules, rule_count, variables, var_count);
+            free(project_root);
+            if (src_dir_allocated) free(src_dir);
+            if (res_dir_allocated) free(res_dir);
+            if (author_allocated) free(author);
+            return 1;
+        }
+        build_time_allocated = true;
+    }
+
+    int result = execute_rules(rules, rule_count, context, src_dir, res_dir, author,
+                               build_time, variables, var_count);
     
     // 释放内存
     free_rules_and_vars(rules, rule_count, variables, var_count);
@@ -263,6 +302,7 @@ int main(int argc, char *argv[]) {
     if (src_dir_allocated) free(src_dir);
     if (res_dir_allocated) free(res_dir);
     if (author_allocated) free(author);
+    if (build_time_allocated) free(build_time);
     
     return result;
 }
