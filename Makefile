@@ -31,6 +31,14 @@ SRC_DIR := $(BASE_DIR)/srcs/$(SELECTED_TARGET)
 # 工具路径
 SCRIPT_DIR := $(BASE_DIR)/scripts
 CUSTOMIZE_TOOL := $(SCRIPT_DIR)/customize/customize
+BUILD_TIME_ARG :=
+ifneq ($(BUILD_TIME),)
+    ifeq ($(BUILD_TIME),1)
+        BUILD_TIME_ARG := --time
+    else
+        BUILD_TIME_ARG := --time=$(BUILD_TIME)
+    endif
+endif
 FEEDS_TOOL := $(SCRIPT_DIR)/feeds/feeds
 PM_INSTALL_TOOL := $(SCRIPT_DIR)/pm-install/pm-install
 INIT_TARGET_TOOL := $(SCRIPT_DIR)/init-target/init-target
@@ -118,7 +126,11 @@ install: check-target
 # 编译目标
 build: check-target
 	@echo "编译目标: $(SELECTED_TARGET)"
-	@$(CUSTOMIZE_TOOL) configs/$(SELECTED_TARGET)/customize.config -c build -s $(SRC_DIR)
+	@if [ -n "$(BUILD_TIME_ARG)" ]; then \
+		$(CUSTOMIZE_TOOL) configs/$(SELECTED_TARGET)/customize.config -c build -s $(SRC_DIR) "$(BUILD_TIME_ARG)"; \
+	else \
+		$(CUSTOMIZE_TOOL) configs/$(SELECTED_TARGET)/customize.config -c build -s $(SRC_DIR); \
+	fi
 	@ mkdir -p  configs/$(SELECTED_TARGET)/log
 	@time  make -C srcs/$(SELECTED_TARGET) -j$(BUILD_JOBS) V=s | tee configs/$(SELECTED_TARGET)/log/$(shell date +%Y%m%d_%H%M%S)_build.log
 	@echo "编译完成"
@@ -212,6 +224,7 @@ help:
 	@echo "  update      更新自定义软件包"
 	@echo "  install     安装软件包"
 	@echo "  build       编译目标"
+	@echo "  owbm build --time  编译并注入当前构建时间"
 	@echo "  copy        复制编译产物到指定路径"
 	@echo "  copy ID=<n> 复制指定序号的编译产物"
 	@echo "  copy M=<标记> 复制时添加标记目录"
@@ -231,6 +244,7 @@ help:
 	@echo "  make target=m28c all      # 为 m28c 执行完整构建"
 	@echo "  make menu                 # 显示菜单选择目标"
 	@echo "  make target=xr30 build    # 编译 xr30 目标"
+	@echo "  owbm build --time         # 编译并使用当前时间替换 __BUILD_TIME__"
 	@echo "  make wrt-menuconfig       # 在已选择的目标上执行menuconfig"
 	@echo "  make copy                 # 执行默认复制操作"
 	@echo "  make copy ID=1            # 执行序号1的复制规则"
